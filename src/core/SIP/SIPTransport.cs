@@ -624,7 +624,7 @@ namespace SIPSorcery.SIP
                 if (header.Contact.Single().ContactURI.Host.StartsWith(IPAddress.Any.ToString()) ||
                     header.Contact.Single().ContactURI.Host.StartsWith(IPAddress.IPv6Any.ToString()))
                 {
-                    if (!String.IsNullOrEmpty(ContactHost))
+                    if (!Extensions.IsNullOrWhiteSpace(ContactHost))
                     {
                         header.Contact.Single().ContactURI.Host = ContactHost + ":" + sendFromEndPoint.Port.ToString();
                     }
@@ -641,6 +641,17 @@ namespace SIPSorcery.SIP
             }
         }
 
+        private struct Response
+        {
+            public SocketError status;
+            public SIPEndPoint dstEndPoint;
+            public Response(SocketError status, SIPEndPoint dstEndPoint)
+            {
+                this.status = status;
+                this.dstEndPoint = dstEndPoint;
+            }
+        }
+
         /// <summary>
         /// Attempts to resolve the destination end point for a SIP response from the top SIP Via header. 
         /// Normally the address in the header will be an IP address but the standard does permit a host which 
@@ -649,13 +660,13 @@ namespace SIPSorcery.SIP
         /// <param name="sipResponse">The SIP response to forward.</param>
         /// <returns>A socket error object indicating the result of the resolve attempt and if successful a SIP
         /// end point to forward the SIP response to.</returns>
-        private (SocketError status, SIPEndPoint dstEndPoint) GetDestinationForResponse(SIPResponse sipResponse)
+        private Response GetDestinationForResponse(SIPResponse sipResponse)
         {
             SIPViaHeader topViaHeader = sipResponse.Header.Vias.TopViaHeader;
             if (topViaHeader == null)
             {
                 logger.LogWarning($"There was no top Via header on a SIP response from {sipResponse.RemoteSIPEndPoint} in SendResponseAsync, response dropped.");
-                return (SocketError.Fault, null);
+                return new Response(SocketError.Fault, null);
             }
             else
             {
@@ -665,17 +676,17 @@ namespace SIPSorcery.SIP
                 if (lookupResult.LookupError != null)
                 {
                     logger.LogWarning("Could not resolve destination for response.\n" + sipResponse.ToString());
-                    return (SocketError.HostNotFound, null);
+                    return new Response(SocketError.HostNotFound, null);
                 }
                 else if (lookupResult.Pending)
                 {
                     // Ignore this response transmission and wait for the transaction retransmit mechanism to try again when DNS will have 
                     // hopefully resolved the end point.
-                    return (SocketError.IOPending, null);
+                    return new Response(SocketError.IOPending, null);
                 }
                 else
                 {
-                    return (SocketError.Success, lookupResult.GetSIPEndPoint());
+                    return new Response(SocketError.Success, lookupResult.GetSIPEndPoint());
                 }
             }
         }
@@ -973,7 +984,7 @@ namespace SIPSorcery.SIP
 
                 throw new ApplicationException($"The transport layer does not have any SIP channels matching {protocol} and {dst.AddressFamily}.");
             }
-            else if (!String.IsNullOrEmpty(channelIDHint) && m_sipChannels.Any(x => x.Value.IsProtocolSupported(protocol) && x.Key == channelIDHint))
+            else if (!Extensions.IsNullOrWhiteSpace(channelIDHint) && m_sipChannels.Any(x => x.Value.IsProtocolSupported(protocol) && x.Key == channelIDHint))
             {
                 return m_sipChannels[channelIDHint];
             }

@@ -476,7 +476,7 @@ namespace SIPSorcery.SIP
         public string FriendlyDescription()
         {
             string caller = FromURI.ToAOR();
-            caller = (!string.IsNullOrEmpty(FromName)) ? FromName + " " + caller : caller;
+            caller = (!Extensions.IsNullOrWhiteSpace(FromName)) ? FromName + " " + caller : caller;
             return caller;
         }
     }
@@ -1769,7 +1769,7 @@ namespace SIPSorcery.SIP
                         {
                             sipHeader.Require = headerValue;
 
-                            if (!String.IsNullOrEmpty(sipHeader.Require))
+                            if (!Extensions.IsNullOrWhiteSpace(sipHeader.Require))
                             {
                                 sipHeader.RequiredExtensions = SIPExtensionHeaders.ParseSIPExtensions(sipHeader.Require, out sipHeader.UnknownRequireExtension);
                             }
@@ -1805,7 +1805,7 @@ namespace SIPSorcery.SIP
                         {
                             sipHeader.Supported = headerValue;
 
-                            if (!String.IsNullOrEmpty(sipHeader.Supported))
+                            if (!Extensions.IsNullOrWhiteSpace(sipHeader.Supported))
                             {
                                 sipHeader.SupportedExtensions = SIPExtensionHeaders.ParseSIPExtensions(sipHeader.Supported, out _);
                             }

@@ -151,7 +151,7 @@ namespace SIPSorcery.Net
         {
             fingerprint = null;
 
-            if (string.IsNullOrEmpty(str))
+            if (Extensions.IsNullOrWhiteSpace(str))
             {
                 return false;
             }

@@ -74,7 +74,7 @@ namespace SIPSorcery.Net
         {
             mediaStreamStatus = MediaStreamStatusEnum.None;
 
-            if (string.IsNullOrEmpty(attributeString))
+            if (Extensions.IsNullOrWhiteSpace(attributeString))
             {
                 return false;
             }

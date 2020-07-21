@@ -119,7 +119,7 @@ namespace SIPSorcery.Net
             sdpMLineIndex = init.sdpMLineIndex;
             usernameFragment = init.usernameFragment;
 
-            if (!String.IsNullOrEmpty(init.candidate))
+            if (!Extensions.IsNullOrWhiteSpace(init.candidate))
             {
                 var iceCandidate = Parse(init.candidate);
                 foundation = iceCandidate.foundation;
@@ -154,7 +154,7 @@ namespace SIPSorcery.Net
 
         public static RTCIceCandidate Parse(string candidateLine)
         {
-            if (string.IsNullOrEmpty(candidateLine))
+            if (Extensions.IsNullOrWhiteSpace(candidateLine))
             {
                 throw new ArgumentNullException("Cant parse ICE candidate from empty string.", candidateLine);
             }
@@ -168,6 +168,17 @@ namespace SIPSorcery.Net
 
                 candidate.foundation = candidateFields[0];
 
+#if NET20
+                if (EnumEx.TryParse<RTCIceComponent>(candidateFields[1], out var candidateComponent))
+                {
+                    candidate.component = candidateComponent;
+                }
+
+                if (EnumEx.TryParse<RTCIceProtocol>(candidateFields[2], out var candidateProtocol))
+                {
+                    candidate.protocol = candidateProtocol;
+                }
+#else
                 if (Enum.TryParse<RTCIceComponent>(candidateFields[1], out var candidateComponent))
                 {
                     candidate.component = candidateComponent;
@@ -177,7 +188,7 @@ namespace SIPSorcery.Net
                 {
                     candidate.protocol = candidateProtocol;
                 }
-
+#endif
                 if (ulong.TryParse(candidateFields[3], out var candidatePriority))
                 {
                     candidate.priority = candidatePriority;
@@ -186,10 +197,17 @@ namespace SIPSorcery.Net
                 candidate.address = candidateFields[4];
                 candidate.port = Convert.ToUInt16(candidateFields[5]);
 
+#if NET20
+                if (EnumEx.TryParse<RTCIceCandidateType>(candidateFields[7], out var candidateType))
+                {
+                    candidate.type = candidateType;
+                }
+#else
                 if (Enum.TryParse<RTCIceCandidateType>(candidateFields[7], out var candidateType))
                 {
                     candidate.type = candidateType;
                 }
+#endif
 
                 if (candidateFields.Length > 8 && candidateFields[8] == REMOTE_ADDRESS_KEY)
                 {
@@ -233,7 +251,7 @@ namespace SIPSorcery.Net
             {
                 string relAddr = relatedAddress;
 
-                if (string.IsNullOrWhiteSpace(relAddr))
+                if (Extensions.IsNullOrWhiteSpace(relAddr))
                 {
                     relAddr = IPAddress.Any.ToString();
                 }
@@ -263,7 +281,7 @@ namespace SIPSorcery.Net
 
         private string GetFoundation()
         {
-            int addressVal = !String.IsNullOrEmpty(address) ? Crypto.GetSHAHash(address).Sum(x => (byte)x) : 0;
+            int addressVal = !Extensions.IsNullOrWhiteSpace(address) ? Crypto.GetSHAHash(address).Sum(x => (byte)x) : 0;
             int svrVal = (type == RTCIceCandidateType.relay || type == RTCIceCandidateType.srflx) ?
                 Crypto.GetSHAHash(IceServer != null ? IceServer._uri.ToString() : "").Sum(x => (byte)x) : 0;
             return (type.GetHashCode() + addressVal + svrVal + protocol.GetHashCode()).ToString();

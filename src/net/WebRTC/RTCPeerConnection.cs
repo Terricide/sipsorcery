@@ -587,7 +587,7 @@ namespace SIPSorcery.Net
                     _rtpIceChannel.SetRemoteCredentials(remoteIceUser, remoteIcePassword);
                 }
 
-                if (!string.IsNullOrWhiteSpace(dtlsFingerprint))
+                if (!Extensions.IsNullOrWhiteSpace(dtlsFingerprint))
                 {
                     dtlsFingerprint = dtlsFingerprint.Trim().ToLower();
                     if (RTCDtlsFingerprint.TryParse(dtlsFingerprint, out var remoteFingerprint))

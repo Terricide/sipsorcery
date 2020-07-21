@@ -290,7 +290,7 @@ namespace SIPSorcery.Net
                     {
                         if (result != null)
                         {
-                            if (string.IsNullOrWhiteSpace(result.Error))
+                            if (Extensions.IsNullOrWhiteSpace(result.Error))
                             {
                                 break;
                             }
@@ -343,7 +343,7 @@ namespace SIPSorcery.Net
                     return result;
                 }
 
-                if (!string.IsNullOrWhiteSpace(hostname))
+                if (!Extensions.IsNullOrWhiteSpace(hostname))
                 {
                     hostname = hostname.Trim();
 
@@ -521,7 +521,7 @@ namespace SIPSorcery.Net
                                 logger.LogWarning("DNSManager resolution error for " + lookupRequest.QueryType + " " + lookupRequest.Hostname + " no response was returned. Time taken=" + DateTime.Now.Subtract(startLookupTime).TotalMilliseconds + "ms.");
                                 bDnsErr = true;
                             }
-                            else if (!string.IsNullOrWhiteSpace(dnsResponse.Error))
+                            else if (!Extensions.IsNullOrWhiteSpace(dnsResponse.Error))
                             {
                                 logger.LogWarning("DNSManager resolution error for " + lookupRequest.QueryType + " " + lookupRequest.Hostname + ". " + dnsResponse.Error + ". Time taken=" + DateTime.Now.Subtract(startLookupTime).TotalMilliseconds + "ms.");
                                 bDnsErr = true;
@@ -550,7 +550,7 @@ namespace SIPSorcery.Net
                                     logger.LogWarning("DNSManager resolution error for " + lookupRequest.QueryType + " " + host + " no response was returned. Time taken=" + DateTime.Now.Subtract(startLookupTime).TotalMilliseconds + "ms.");
                                     bDnsErr = true;
                                 }
-                                else if (!string.IsNullOrWhiteSpace(dnsResponse.Error))
+                                else if (!Extensions.IsNullOrWhiteSpace(dnsResponse.Error))
                                 {
                                     logger.LogWarning("DNSManager resolution error for " + lookupRequest.QueryType + " " + host + ". " + dnsResponse.Error + ". Time taken=" + DateTime.Now.Subtract(startLookupTime).TotalMilliseconds + "ms.");
                                     bDnsErr = true;

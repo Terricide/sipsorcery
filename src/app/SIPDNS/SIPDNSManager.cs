@@ -463,7 +463,7 @@ namespace SIPSorcery.SIP.App
             {
                 result.ATimedoutAt = DateTime.Now;
             }
-            else if (!string.IsNullOrWhiteSpace(aRecordResponse.Error))
+            else if (!Extensions.IsNullOrWhiteSpace(aRecordResponse.Error))
             {
                 result.LookupError = aRecordResponse.Error;
             }
@@ -505,7 +505,7 @@ namespace SIPSorcery.SIP.App
             {
                 result.ATimedoutAt = DateTime.Now;
             }
-            else if (!string.IsNullOrWhiteSpace(aaaaRecordResponse.Error))
+            else if (!Extensions.IsNullOrWhiteSpace(aaaaRecordResponse.Error))
             {
                 result.LookupError = aaaaRecordResponse.Error;
             }
@@ -573,7 +573,7 @@ namespace SIPSorcery.SIP.App
                 {
                     result.ATimedoutAt = DateTime.Now;
                 }
-                else if (!string.IsNullOrWhiteSpace(aRecordResponse.Error))
+                else if (!Extensions.IsNullOrWhiteSpace(aRecordResponse.Error))
                 {
                     result.LookupError = aRecordResponse.Error;
                 }
@@ -702,7 +702,7 @@ namespace SIPSorcery.SIP.App
             {
                 lookupResult.NAPTRTimedoutAt = DateTime.Now;
             }
-            else if (string.IsNullOrWhiteSpace(naptrRecordResponse.Error) && naptrRecordResponse.RecordsNAPTR != null && naptrRecordResponse.RecordsNAPTR.Length > 0)
+            else if (Extensions.IsNullOrWhiteSpace(naptrRecordResponse.Error) && naptrRecordResponse.RecordsNAPTR != null && naptrRecordResponse.RecordsNAPTR.Length > 0)
             {
                 foreach (RecordNAPTR naptrRecord in naptrRecordResponse.RecordsNAPTR)
                 {
@@ -784,11 +784,11 @@ namespace SIPSorcery.SIP.App
                 SIPMonitorLogEvent(new SIPMonitorConsoleEvent(SIPMonitorServerTypesEnum.Unknown, SIPMonitorEventTypesEnum.DNS, "SIP DNS SRV record lookup timed out for " + srvLookup + ".", null));
                 lookupResult.SRVTimedoutAt = DateTime.Now;
             }
-            else if (!string.IsNullOrWhiteSpace(srvRecordResponse.Error))
+            else if (!Extensions.IsNullOrWhiteSpace(srvRecordResponse.Error))
             {
                 SIPMonitorLogEvent(new SIPMonitorConsoleEvent(SIPMonitorServerTypesEnum.Unknown, SIPMonitorEventTypesEnum.DNS, "SIP DNS SRV record lookup for " + srvLookup + " returned error of " + lookupResult.LookupError + ".", null));
             }
-            else if (string.IsNullOrWhiteSpace(srvRecordResponse.Error) && srvRecordResponse.RecordSRV != null && srvRecordResponse.RecordSRV.Length > 0)
+            else if (Extensions.IsNullOrWhiteSpace(srvRecordResponse.Error) && srvRecordResponse.RecordSRV != null && srvRecordResponse.RecordSRV.Length > 0)
             {
                 foreach (RecordSRV srvRecord in srvRecordResponse.RecordSRV)
                 {
