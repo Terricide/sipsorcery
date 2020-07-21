@@ -582,13 +582,13 @@ namespace SIPSorcery.SIP
             List<SIPExtensions> knownExtensions = new List<SIPExtensions>();
             unknownExtensions = null;
 
-            if (String.IsNullOrEmpty(extensionList) == false)
+            if (Extensions.IsNullOrWhiteSpace(extensionList) == false)
             {
                 string[] extensions = extensionList.Trim().Split(',');
 
                 foreach (string extension in extensions)
                 {
-                    if (String.IsNullOrEmpty(extension) == false)
+                    if (Extensions.IsNullOrWhiteSpace(extension) == false)
                     {
                         if (extension.Trim().ToLower() == PRACK)
                         {

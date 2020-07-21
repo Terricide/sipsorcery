@@ -140,8 +140,9 @@ namespace SIPSorcery.SIP
                     {
                         //logger.LogDebug("Looking for ACK transaction, branchid=" + sipRequest.Header.Via.TopViaHeader.Branch + ".");
 
-                        foreach (var (_, transaction) in m_pendingTransactions)
+                        foreach (var response in m_pendingTransactions)
                         {
+                            var transaction = response.Value;
                             // According to the standard an ACK should only not get matched by the branchid on the original INVITE for a non-2xx response. However
                             // my Cisco phone created a new branchid on ACKs to 487 responses and since the Cisco also used the same Call-ID and From tag on the initial
                             // unauthenticated request and the subsequent authenticated request the condition below was found to be the best way to match the ACK.
@@ -184,8 +185,9 @@ namespace SIPSorcery.SIP
                     }
                     else if (sipRequest.Method == SIPMethodsEnum.PRACK)
                     {
-                        foreach (var (_, transaction) in m_pendingTransactions)
+                        foreach (var response in m_pendingTransactions)
                         {
+                            var transaction = response.Value;
                             if (transaction.TransactionType == SIPTransactionTypesEnum.InviteServer)
                             {
                                 if (transaction.TransactionRequest.Header.CallId == sipRequest.Header.CallId &&
@@ -233,8 +235,9 @@ namespace SIPSorcery.SIP
             logger.LogDebug("=== Pending Transactions ===");
 
             var now = DateTime.Now;
-            foreach (var (_, transaction) in m_pendingTransactions)
+            foreach (var response in m_pendingTransactions)
             {
+                var transaction = response.Value;
                 logger.LogDebug("Pending transaction " + transaction.TransactionRequest.Method + " " + transaction.TransactionState + " " + now.Subtract(transaction.Created).TotalSeconds.ToString("0.##") + "s " + transaction.TransactionRequestURI.ToString() + " (" + transaction.TransactionId + ").");
             }
         }
@@ -272,8 +275,9 @@ namespace SIPSorcery.SIP
 
             lock (m_pendingTransactions)
             {
-                foreach (var (_, transaction) in m_pendingTransactions)
+                foreach (var response in m_pendingTransactions)
                 {
+                    var transaction = response.Value;
                     if ((transaction.TransactionType == SIPTransactionTypesEnum.InviteClient || transaction.TransactionType == SIPTransactionTypesEnum.InviteServer) &&
                         transaction.TransactionFinalResponse != null &&
                         transaction.TransactionState == SIPTransactionStatesEnum.Completed &&
@@ -312,8 +316,9 @@ namespace SIPSorcery.SIP
                     }
                     else
                     {
-                        foreach (var (_, transaction) in m_pendingTransactions.Where(x => x.Value.DeliveryPending))
+                        foreach (var response in m_pendingTransactions.Where(x => x.Value.DeliveryPending))
                         {
+                            var transaction = response.Value;
                             try
                             {
                                 if (transaction.TransactionState == SIPTransactionStatesEnum.Terminated ||
@@ -580,8 +585,9 @@ namespace SIPSorcery.SIP
                 List<string> expiredTransactionIds = new List<string>();
                 var now = DateTime.Now;
 
-                foreach (var (_, transaction) in m_pendingTransactions)
+                foreach (var response in m_pendingTransactions)
                 {
+                    var transaction = response.Value;
                     if (transaction.TransactionType == SIPTransactionTypesEnum.InviteClient || transaction.TransactionType == SIPTransactionTypesEnum.InviteServer)
                     {
                         if (transaction.TransactionState == SIPTransactionStatesEnum.Confirmed)

@@ -290,7 +290,7 @@ namespace SIPSorcery.Net
             offset += agentIDBuffer.Length;
 
             // Auth key
-            if (!String.IsNullOrEmpty(password))
+            if (!Extensions.IsNullOrWhiteSpace(password))
             {
                 var passwordBuffer = HepChunk.GetBytes(ChunkTypeEnum.AuthenticationKey, Encoding.UTF8.GetBytes(password));
                 Buffer.BlockCopy(passwordBuffer, 0, packetBuffer, offset, passwordBuffer.Length);

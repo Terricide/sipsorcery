@@ -74,7 +74,7 @@ namespace SIPSorcery.SIP
         public SIPParameters(string sipString, char delimiter) :
             this()
         {
-            if (!String.IsNullOrEmpty(sipString))
+            if (!Extensions.IsNullOrWhiteSpace(sipString))
             {
                 Initialise(sipString, delimiter);
             }

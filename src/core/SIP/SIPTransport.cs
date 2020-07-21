@@ -649,7 +649,7 @@ namespace SIPSorcery.SIP
                 if (header.Contact.Single().ContactURI.Host.StartsWith(IPAddress.Any.ToString()) ||
                     header.Contact.Single().ContactURI.Host.StartsWith(IPAddress.IPv6Any.ToString()))
                 {
-                    if (!String.IsNullOrEmpty(ContactHost))
+                    if (!Extensions.IsNullOrWhiteSpace(ContactHost))
                     {
                         header.Contact.Single().ContactURI.Host = ContactHost + ":" + sendFromEndPoint.Port.ToString();
                     }
@@ -666,6 +666,17 @@ namespace SIPSorcery.SIP
             }
         }
 
+        private struct Response
+        {
+            public SocketError status;
+            public SIPEndPoint dstEndPoint;
+            public Response(SocketError status, SIPEndPoint dstEndPoint)
+            {
+                this.status = status;
+                this.dstEndPoint = dstEndPoint;
+            }
+        }
+
         /// <summary>
         /// Attempts to resolve the destination end point for a SIP request or response send.
         /// </summary>
@@ -673,10 +684,11 @@ namespace SIPSorcery.SIP
         /// <param name="destinationUri">The URI representing the destination for the send</param>
         /// <returns>A socket error object indicating the result of the resolve attempt and if successful a SIP
         /// end point to forward the SIP response to.</returns>
-        private (SocketError status, SIPEndPoint dstEndPoint) GetDestinationForSend(SIPMessageBase sipMessage, SIPURI destinationUri)
+        private Response GetDestinationForResponse(SIPResponse sipResponse)
         {
             if (IPAddress.TryParse(destinationUri.MAddrOrHostAddress, out var dstIPAddress))
             {
+                logger.LogWarning($"There was no top Via header on a SIP response from {sipResponse.RemoteSIPEndPoint} in SendResponseAsync, response dropped.");
                 // The URI is an IP address, no need for a DNS query.
                 if (!ushort.TryParse(destinationUri.HostPort, out var port))
                 {
@@ -684,8 +696,7 @@ namespace SIPSorcery.SIP
                 }
                 SIPEndPoint dstEndPoint = new SIPEndPoint(destinationUri.Protocol, dstIPAddress, port);
                 sipMessage.DnsResult = dstEndPoint;
-                return (SocketError.Success, dstEndPoint);
-            }
+                return new Response(SocketError.Success, dstEndPoint);            }
             else
             {
                 // Initiate the DNS query.
@@ -1015,7 +1026,7 @@ namespace SIPSorcery.SIP
 
                 throw new ApplicationException($"The transport layer does not have any SIP channels matching {protocol} and {dst.AddressFamily}.");
             }
-            else if (!String.IsNullOrEmpty(channelIDHint) && m_sipChannels.Any(x => x.Value.IsProtocolSupported(protocol) && x.Key == channelIDHint))
+            else if (!Extensions.IsNullOrWhiteSpace(channelIDHint) && m_sipChannels.Any(x => x.Value.IsProtocolSupported(protocol) && x.Key == channelIDHint))
             {
                 return m_sipChannels[channelIDHint];
             }

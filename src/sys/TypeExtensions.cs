@@ -96,7 +96,7 @@ namespace SIPSorcery.Sys
         /// <returns>A slice of the input string or null if the slice is not possible.</returns>
         public static string Slice(this string s, char startDelimiter, char endDelimeter)
         {
-            if (String.IsNullOrEmpty(s))
+            if (Extensions.IsNullOrWhiteSpace(s))
             {
                 return null;
             }

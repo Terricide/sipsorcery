@@ -80,7 +80,7 @@ namespace SIPSorcery.Net
         /// length is 255 bytes (note bytes not characters).</param>
         public RTCPSDesReport(uint ssrc, string cname)
         {
-            if (String.IsNullOrEmpty(cname))
+            if (Extensions.IsNullOrWhiteSpace(cname))
             {
                 throw new ArgumentNullException("cname");
             }

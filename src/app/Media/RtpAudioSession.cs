@@ -288,7 +288,7 @@ namespace SIPSorcery.Media
                             {
                                 string sourceFile = _audioOpts.SourceFiles[_sendingFormat.FormatCodec];
 
-                                if (String.IsNullOrEmpty(sourceFile) || !File.Exists(sourceFile))
+                                if (Extensions.IsNullOrWhiteSpace(sourceFile) || !File.Exists(sourceFile))
                                 {
                                     Log.LogWarning("Could not start audio music source as the source file does not exist.");
                                 }

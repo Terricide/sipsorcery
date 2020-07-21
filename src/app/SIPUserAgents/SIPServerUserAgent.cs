@@ -114,7 +114,7 @@ namespace SIPSorcery.SIP.App
         {
             get
             {
-                if (!String.IsNullOrEmpty(m_uasTransaction.TransactionRequest.Body))
+                if (!Extensions.IsNullOrWhiteSpace(m_uasTransaction.TransactionRequest.Body))
                 {
                     return SDP.ParseSDPDescription(m_uasTransaction.TransactionRequest.Body);
                 }

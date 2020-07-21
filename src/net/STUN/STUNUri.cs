@@ -131,7 +131,7 @@ namespace SIPSorcery.Net
         {
             STUNUri stunUri = new STUNUri();
 
-            if (String.IsNullOrEmpty(uri))
+            if (Extensions.IsNullOrWhiteSpace(uri))
             {
                 throw new ApplicationException("A STUN URI cannot be parsed from an empty string.");
             }
@@ -152,7 +152,7 @@ namespace SIPSorcery.Net
                     }
                     else
                     {
-                        if (!Enum.TryParse<STUNSchemesEnum>(schemeStr.Substring(0, colonPosn), true, out stunUri.Scheme))
+                        if (!Extensions.TryParse<STUNSchemesEnum>(schemeStr.Substring(0, colonPosn), true, out stunUri.Scheme))
                         {
                             stunUri.Scheme = DefaultSTUNScheme;
                         }

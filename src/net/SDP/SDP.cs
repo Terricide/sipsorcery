@@ -583,7 +583,7 @@ namespace SIPSorcery.Net
 
         public void AddExtra(string attribute)
         {
-            if (!string.IsNullOrWhiteSpace(attribute))
+            if (!Extensions.IsNullOrWhiteSpace(attribute))
             {
                 ExtraSessionAttributes.Add(attribute);
             }
@@ -591,7 +591,7 @@ namespace SIPSorcery.Net
 
         public string RawString()
         {
-            if (string.IsNullOrWhiteSpace(this.m_rawSdp))
+            if (Extensions.IsNullOrWhiteSpace(this.m_rawSdp))
             {
                 return this.ToString();
             }
@@ -612,9 +612,9 @@ namespace SIPSorcery.Net
 
             sdp += "t=" + Timing + CRLF;
 
-            sdp += !string.IsNullOrWhiteSpace(IceUfrag) ? "a=" + ICE_UFRAG_ATTRIBUTE_PREFIX + ":" + IceUfrag + CRLF : null;
-            sdp += !string.IsNullOrWhiteSpace(IcePwd) ? "a=" + ICE_PWD_ATTRIBUTE_PREFIX + ":" + IcePwd + CRLF : null;
-            sdp += !string.IsNullOrWhiteSpace(DtlsFingerprint) ? "a=" + DTLS_FINGERPRINT_ATTRIBUTE_PREFIX + ":" + DtlsFingerprint + CRLF : null;
+            sdp += !Extensions.IsNullOrWhiteSpace(IceUfrag) ? "a=" + ICE_UFRAG_ATTRIBUTE_PREFIX + ":" + IceUfrag + CRLF : null;
+            sdp += !Extensions.IsNullOrWhiteSpace(IcePwd) ? "a=" + ICE_PWD_ATTRIBUTE_PREFIX + ":" + IcePwd + CRLF : null;
+            sdp += !Extensions.IsNullOrWhiteSpace(DtlsFingerprint) ? "a=" + DTLS_FINGERPRINT_ATTRIBUTE_PREFIX + ":" + DtlsFingerprint + CRLF : null;
             if (IceCandidates?.Count > 0)
             {
                 foreach (var candidate in IceCandidates)
@@ -622,14 +622,14 @@ namespace SIPSorcery.Net
                     sdp += $"a={SDP.ICE_CANDIDATE_ATTRIBUTE_PREFIX}:{candidate}{CRLF}";
                 }
             }
-            sdp += string.IsNullOrWhiteSpace(SessionDescription) ? null : "i=" + SessionDescription + CRLF;
-            sdp += string.IsNullOrWhiteSpace(URI) ? null : "u=" + URI + CRLF;
+            sdp += Extensions.IsNullOrWhiteSpace(SessionDescription) ? null : "i=" + SessionDescription + CRLF;
+            sdp += Extensions.IsNullOrWhiteSpace(URI) ? null : "u=" + URI + CRLF;
 
             if (OriginatorEmailAddresses != null && OriginatorEmailAddresses.Length > 0)
             {
                 foreach (string originatorAddress in OriginatorEmailAddresses)
                 {
-                    sdp += string.IsNullOrWhiteSpace(originatorAddress) ? null : "e=" + originatorAddress + CRLF;
+                    sdp += Extensions.IsNullOrWhiteSpace(originatorAddress) ? null : "e=" + originatorAddress + CRLF;
                 }
             }
 
@@ -637,7 +637,7 @@ namespace SIPSorcery.Net
             {
                 foreach (string originatorNumber in OriginatorPhoneNumbers)
                 {
-                    sdp += string.IsNullOrWhiteSpace(originatorNumber) ? null : "p=" + originatorNumber + CRLF;
+                    sdp += Extensions.IsNullOrWhiteSpace(originatorNumber) ? null : "p=" + originatorNumber + CRLF;
                 }
             }
 
@@ -645,7 +645,7 @@ namespace SIPSorcery.Net
 
             foreach (string extra in ExtraSessionAttributes)
             {
-                sdp += string.IsNullOrWhiteSpace(extra) ? null : extra + CRLF;
+                sdp += Extensions.IsNullOrWhiteSpace(extra) ? null : extra + CRLF;
             }
 
             if (SessionMediaStreamStatus != MediaStreamStatusEnum.None)

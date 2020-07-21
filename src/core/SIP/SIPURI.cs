@@ -113,7 +113,7 @@ namespace SIPSorcery.SIP
             get
             {
                 string canonicalAddress = Scheme + ":";
-                canonicalAddress += !String.IsNullOrEmpty(User) ? User + "@" : null;
+                canonicalAddress += !Extensions.IsNullOrWhiteSpace(User) ? User + "@" : null;
 
                 // First expression is for IPv6 addresses with a port.
                 // Second expression is for IPv4 addresses and hostnames with a port.
@@ -272,7 +272,7 @@ namespace SIPSorcery.SIP
             {
                 SIPURI sipURI = new SIPURI();
 
-                if (String.IsNullOrEmpty(uri))
+                if (Extensions.IsNullOrWhiteSpace(uri))
                 {
                     throw new SIPValidationException(SIPValidationFieldsEnum.URI, "A SIP URI cannot be parsed from an empty string.");
                 }

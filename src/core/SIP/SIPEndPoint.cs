@@ -236,8 +236,8 @@ namespace SIPSorcery.SIP
         {
             IPEndPoint ep = new IPEndPoint(Address, Port);
             string result = Protocol + ":" + ep.ToString();
-            //result += (!String.IsNullOrEmpty(ChannelID) ? ";" + CHANNELID_ATTRIBUTE_NAME + "=" + ChannelID : null);
-            //result += (!String.IsNullOrEmpty(ConnectionID) ? ";" + CONNECTIONID_ATTRIBUTE_NAME + "=" + ConnectionID : null);
+            //result += (!Extensions.IsNullOrWhiteSpace(ChannelID) ? ";" + CHANNELID_ATTRIBUTE_NAME + "=" + ChannelID : null);
+            //result += (!Extensions.IsNullOrWhiteSpace(ConnectionID) ? ";" + CONNECTIONID_ATTRIBUTE_NAME + "=" + ConnectionID : null);
             return result;
         }
 

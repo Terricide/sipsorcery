@@ -91,7 +91,7 @@ namespace SIPSorcery.Net
         /// <returns>An IPEndPoint or null.</returns>
         private static Task<IPEndPoint> Resolve(STUNUri uri, QueryType queryType)
         {
-            if (uri == null || String.IsNullOrWhiteSpace(uri.Host))
+            if (uri == null || Extensions.IsNullOrWhiteSpace(uri.Host))
             {
                 throw new ArgumentNullException("uri", "DNS resolve was supplied an empty input.");
             }

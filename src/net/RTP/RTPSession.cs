@@ -706,7 +706,7 @@ namespace SIPSorcery.Net
                 // Pre-flight checks have passed. Move onto matching up the local and remote media streams.
                 IPAddress connectionAddress = null;
 
-                if (sessionDescription.Connection != null && !String.IsNullOrEmpty(sessionDescription.Connection.ConnectionAddress))
+                if (sessionDescription.Connection != null && !Extensions.IsNullOrWhiteSpace(sessionDescription.Connection.ConnectionAddress))
                 {
                     connectionAddress = IPAddress.Parse(sessionDescription.Connection.ConnectionAddress);
                 }
@@ -1922,7 +1922,7 @@ namespace SIPSorcery.Net
         /// <param name="buffer">The data received.</param>
         protected void OnReceive(int localPort, IPEndPoint remoteEndPoint, byte[] buffer)
         {
-            if (remoteEndPoint.Address.IsIPv4MappedToIPv6)
+            if (remoteEndPoint.Address.IsIPv4MappedToIPv6())
             {
                 // Required for matching existing RTP end points (typically set from SDP) and
                 // whether or not the destination end point should be switched.
