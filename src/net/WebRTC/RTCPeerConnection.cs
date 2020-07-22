@@ -429,6 +429,7 @@ namespace SIPSorcery.Net
                     };
                     dataChannel.SetStream(stm);
                     DataChannels.Add(dataChannel);
+                    ondatachannel?.Invoke(dataChannel);
                 }
             };
 

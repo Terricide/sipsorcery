@@ -173,6 +173,7 @@ namespace SIPSorcery.SIP
 
             logger.LogInformation($"SIP WebSocket Channel created for {endPoint}.");
 
+#if NET20
             m_webSocketServer.AddWebSocketService<SIPMessagWebSocketBehavior>("/", (behaviour) =>
             {
                 behaviour.Channel = this;
@@ -180,6 +181,7 @@ namespace SIPSorcery.SIP
 
                 behaviour.OnClientClose += (id) => m_ingressConnections.TryRemove(id, out _);
             });
+#endif
 
             m_webSocketServer.Start();
         }

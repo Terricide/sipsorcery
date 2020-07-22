@@ -38,7 +38,18 @@ namespace SIPSorcery.Net
 
         public ushort? id { get; set; }
 
-        public RTCDataChannelState readyState => RTCDataChannelState.connecting;
+        private RTCDataChannelState _readyState = RTCDataChannelState.connecting;
+        public RTCDataChannelState readyState
+        {
+            get
+            {
+                return _readyState;
+            }
+            set
+            {
+                _readyState = value;
+            }
+        }
 
         public ulong bufferedAmount { get; set; }
 
@@ -72,6 +83,7 @@ namespace SIPSorcery.Net
             logger.LogDebug($"Data channel for label {label} now open.");
             IsOpened = true;
             id = (ushort)_sctpStream.getNum();
+            readyState = RTCDataChannelState.open;
             onopen?.Invoke();
         }
 
@@ -118,7 +130,9 @@ namespace SIPSorcery.Net
         {
             IsOpened = false;
             logger.LogDebug($"Data channel stream closed id {s.getNum()}.");
+            readyState = RTCDataChannelState.closing;
             onclose?.Invoke();
+            readyState = RTCDataChannelState.closed;
         }
 
         public void onMessage(SCTPStream s, string message)
