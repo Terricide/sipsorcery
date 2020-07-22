@@ -425,7 +425,28 @@ namespace SIPSorcery.Net
             {
                 // Supporting MDNS lookups means an additional nuget dependency. Hopefully
                 // support is coming to .Net Core soon (AC 12 Jun 2020).
-                OnIceCandidateError?.Invoke(candidate, $"Remote ICE candidate has an unsupported MDNS hostname {candidate.address}.");
+
+                FindAddress(candidate.address).ContinueWith(e =>
+                {
+                    if (e.IsFaulted)
+                    {
+                        OnIceCandidateError?.Invoke(candidate, $"Remote ICE candidate has an unsupported MDNS hostname {candidate.address}.");
+                    }
+                    else
+                    {
+                        var answer = (from a in e.Result.Answers
+                                      where a is Makaretu.Dns.ARecord
+                                      select a as Makaretu.Dns.ARecord)?.FirstOrDefault();
+                        candidate.address = answer.Address.ToString();
+                        // Have a remote candidate. Connectivity checks can start. Note because we support ICE trickle
+                        // we may also still be gathering candidates. Connectivity checks and gathering can be done in parallel.
+
+                        logger.LogDebug($"ICE session received remote candidate: {candidate}");
+
+                        _remoteCandidates.Add(candidate);
+                        _pendingRemoteCandidates.Enqueue(candidate);
+                    }
+                });
             }
             else if (IPAddress.TryParse(candidate.address, out var addr) &&
                 (IPAddress.Any.Equals(addr) || IPAddress.IPv6Any.Equals(addr)))
@@ -445,6 +466,40 @@ namespace SIPSorcery.Net
 
                 _remoteCandidates.Add(candidate);
                 _pendingRemoteCandidates.Enqueue(candidate);
+            }
+        }
+
+        private async Task<Makaretu.Dns.Message> FindAddress(string localIp)
+        {
+            using (var cancellation = new CancellationTokenSource(1000))
+            using (var evt = new ManualResetEvent(false))
+            {
+                Makaretu.Dns.Message result = null;
+
+                try
+                {
+                    using (var mdns = new Makaretu.Dns.MulticastService())
+                    {
+                        mdns.AnswerReceived += (s, ex) =>
+                        {
+                            result = ex.Message;
+                            evt.Set();
+                        };
+                        mdns.Start();
+                        mdns.SendQuery(localIp);
+                        await evt.WaitOneAsync(1000, cancellation.Token).ConfigureAwait(false);
+                    }
+                }
+                catch (System.Threading.Tasks.TaskCanceledException)
+                {
+                    logger.LogWarning($"Timeout looking for mDns:{localIp}");
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex.ToString());
+                }
+
+                return result;
             }
         }
 

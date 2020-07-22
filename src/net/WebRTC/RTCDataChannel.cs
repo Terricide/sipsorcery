@@ -122,7 +122,9 @@ namespace SIPSorcery.Net
         {
             IsOpened = false;
             logger.LogDebug($"Data channel stream closed id {s.getNum()}.");
+            readyState = RTCDataChannelState.closing;
             onclose?.Invoke();
+            readyState = RTCDataChannelState.closed;
         }
 
         public void onDataMessage(SCTPStream s, byte[] data)
