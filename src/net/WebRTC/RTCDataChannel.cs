@@ -70,6 +70,7 @@ namespace SIPSorcery.Net
         //public event Action onclosing;
         public event Action onclose;
         public event Action<string> onmessage;
+        public event Action<byte[]> onDatamessage;
 
         internal void SetStream(SCTPStream s)
         {
@@ -133,6 +134,12 @@ namespace SIPSorcery.Net
             readyState = RTCDataChannelState.closing;
             onclose?.Invoke();
             readyState = RTCDataChannelState.closed;
+        }
+
+        public void onDataMessage(SCTPStream s, byte[] data)
+        {
+            //logger.LogDebug($"Data channel received message (label={s.getLabel()}, streamID={s.getNum()}): {message}.");
+            onDatamessage?.Invoke(data);
         }
 
         public void onMessage(SCTPStream s, string message)
