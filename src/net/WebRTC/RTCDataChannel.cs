@@ -133,12 +133,6 @@ namespace SIPSorcery.Net
             onDatamessage?.Invoke(data);
         }
 
-        public void onDataMessage(SCTPStream s, byte[] data)
-        {
-            //logger.LogDebug($"Data channel received message (label={s.getLabel()}, streamID={s.getNum()}): {message}.");
-            onDatamessage?.Invoke(data);
-        }
-
         public void onMessage(SCTPStream s, string message)
         {
             //logger.LogDebug($"Data channel received message (label={s.getLabel()}, streamID={s.getNum()}): {message}.");
