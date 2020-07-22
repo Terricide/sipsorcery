@@ -125,7 +125,7 @@ namespace SIPSorcery.SIP
         /// <returns>A SIPEndPoint or null.</returns>
         private static async Task<SIPEndPoint> Resolve(SIPURI uri, QueryType queryType)
         {
-            if (uri == null || String.IsNullOrWhiteSpace(uri.MAddrOrHostAddress))
+            if (uri == null || Extensions.IsNullOrWhiteSpace(uri.MAddrOrHostAddress))
             {
                 throw new ArgumentNullException("uri", "SIP DNS resolve was supplied an empty input.");
             }

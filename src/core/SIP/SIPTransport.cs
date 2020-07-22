@@ -684,8 +684,7 @@ namespace SIPSorcery.SIP
         /// <param name="destinationUri">The URI representing the destination for the send</param>
         /// <returns>A socket error object indicating the result of the resolve attempt and if successful a SIP
         /// end point to forward the SIP response to.</returns>
-        private Response GetDestinationForResponse(SIPResponse sipResponse)
-        {
+        private Response GetDestinationForSend(SIPMessageBase sipMessage, SIPURI destinationUri)        {
             if (IPAddress.TryParse(destinationUri.MAddrOrHostAddress, out var dstIPAddress))
             {
                 logger.LogWarning($"There was no top Via header on a SIP response from {sipResponse.RemoteSIPEndPoint} in SendResponseAsync, response dropped.");
