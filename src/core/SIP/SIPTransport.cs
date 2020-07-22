@@ -684,7 +684,7 @@ namespace SIPSorcery.SIP
         /// <param name="destinationUri">The URI representing the destination for the send</param>
         /// <returns>A socket error object indicating the result of the resolve attempt and if successful a SIP
         /// end point to forward the SIP response to.</returns>
-        private (SocketError status, SIPEndPoint dstEndPoint) GetDestinationForSend(SIPMessageBase sipMessage, SIPURI destinationUri)
+        private Response GetDestinationForSend(SIPMessageBase sipMessage, SIPURI destinationUri)
         {
             if(IPAddress.TryParse(destinationUri.MAddrOrHostAddress, out var dstIPAddress))
             {
@@ -695,7 +695,7 @@ namespace SIPSorcery.SIP
                 }
                 SIPEndPoint dstEndPoint = new SIPEndPoint(destinationUri.Protocol, dstIPAddress, port);
                 sipMessage.DnsResult = dstEndPoint;
-                return (SocketError.Success, dstEndPoint);
+                return new Response(SocketError.Success, dstEndPoint);
             }
             else
             {
@@ -728,7 +728,7 @@ namespace SIPSorcery.SIP
                         }
                     );
 
-                return (SocketError.InProgress, null);
+                return new Response(SocketError.InProgress, null);
             }
         }
 
