@@ -17,11 +17,14 @@ using System;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using DnsClient;
 using DnsClient.Protocol;
 using Microsoft.Extensions.Logging;
 using SIPSorcery.Sys;
+
+[assembly: InternalsVisibleToAttribute("SIPSorcery.IntegrationTests")]
 
 namespace SIPSorcery.SIP
 {
@@ -73,6 +76,12 @@ namespace SIPSorcery.SIP
             get
             {
                 return _lookupClient;
+            }
+            internal set
+            {
+                // Intended to allow unit testing with client options that will cause the
+                // lookup logic to execute failure conditions.
+                _lookupClient = value;
             }
         }
 

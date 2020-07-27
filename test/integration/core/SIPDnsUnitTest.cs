@@ -1,30 +1,34 @@
 ﻿//-----------------------------------------------------------------------------
-// Filename: SIPDNSManagerUnitTest.cs
+// Filename: SIPDnsUnitTest.cs
 //
-// Description: Unit tests for the SIP specific DNS lookup logic.
+// Description: Integration tests for the SIP specific DNS lookup logic.
 //
 // Author(s):
 // Aaron Clauson (aaron@sipsorcery.com)
 // 
 // History:
 // 14 Oct 2019	Aaron Clauson	Created, Dublin, Ireland.
+// 24 Jul 2020  Aaron Clauson   Moved from unit to integration tests.
 //
 // License: 
 // BSD 3-Clause "New" or "Revised" License, see included LICENSE.md file.
 //-----------------------------------------------------------------------------
 
+using System;
+using System.Net;
 using System.Threading.Tasks;
+using DnsClient;
 using Microsoft.Extensions.Logging;
 using Xunit;
 
-namespace SIPSorcery.SIP.App.UnitTests
+namespace SIPSorcery.SIP.IntegrationTests
 {
     [Trait("Category", "dns")]
-    public class SIPDNSManagerUnitTest
+    public class SIPDnsUnitTest
     {
         private Microsoft.Extensions.Logging.ILogger logger = null;
 
-        public SIPDNSManagerUnitTest(Xunit.Abstractions.ITestOutputHelper output)
+        public SIPDnsUnitTest(Xunit.Abstractions.ITestOutputHelper output)
         {
             logger = SIPSorcery.UnitTests.TestLogHelper.InitTestLogger(output);
         }
@@ -38,7 +42,6 @@ namespace SIPSorcery.SIP.App.UnitTests
             logger.LogDebug("--> " + System.Reflection.MethodBase.GetCurrentMethod().Name);
             logger.BeginScope(System.Reflection.MethodBase.GetCurrentMethod().Name);
 
-            //var result = SIPDNSManager.ResolveSIPService(SIPURI.ParseSIPURIRelaxed("sipsorcery.com"), false);
             var result = SIPDns.Resolve(SIPURI.ParseSIPURIRelaxed("sipsorcery.com"), false).Result;
 
             Assert.NotNull(result);
@@ -59,8 +62,6 @@ namespace SIPSorcery.SIP.App.UnitTests
 
             if (hostname.EndsWith(SIPDns.MDNS_TLD))
             {
-                // TODO: Look into why DNS calls on macos cannot resolve domains ending in ".local"
-                // RFC6762 domains.
                 logger.LogWarning("Skipping unit test LookupLocalHostnameTest due to RFC6762 domain.");
             }
             else
@@ -164,6 +165,55 @@ namespace SIPSorcery.SIP.App.UnitTests
             Assert.Equal(SIPProtocolsEnum.tls, result.Protocol);
 
             logger.LogDebug($"resolved to SIP end point {result}.");
+        }
+
+        /// <summary>
+        /// Tests that attempting to resolve a non-existent hostname is handled gracefully.
+        /// </summary>
+        [Fact]
+        public void ResolveNonExistentServiceTest()
+        {
+            logger.LogDebug("--> " + System.Reflection.MethodBase.GetCurrentMethod().Name);
+            logger.BeginScope(System.Reflection.MethodBase.GetCurrentMethod().Name);
+
+            var result = SIPDns.Resolve(SIPURI.ParseSIPURIRelaxed("sipsorceryx.com"), false).Result;
+
+            Assert.Null(result);
+        }
+
+        /// <summary>
+        /// Tests that using a non-responding DNS server is handled gracefully.
+        /// </summary>
+        [Fact]
+        public void NonRespondingDNSServerTest()
+        {
+            logger.LogDebug("--> " + System.Reflection.MethodBase.GetCurrentMethod().Name);
+            logger.BeginScope(System.Reflection.MethodBase.GetCurrentMethod().Name);
+
+            var originalClient = SIPDns.LookupClient;
+
+            try
+            {
+                LookupClientOptions clientOptions = new LookupClientOptions(IPAddress.Loopback)
+                {
+                    Retries = 3,
+                    Timeout = TimeSpan.FromSeconds(1),
+                    UseCache = true,
+                    UseTcpFallback = false
+                };
+
+                SIPDns.PreferIPv6NameResolution = true;
+                SIPDns.LookupClient = new LookupClient(clientOptions);
+
+                var result = SIPDns.Resolve(SIPURI.ParseSIPURIRelaxed("sipsorcery.com"), false).Result;
+
+                Assert.Null(result);
+            }
+            finally
+            {
+                SIPDns.LookupClient = originalClient;
+                SIPDns.PreferIPv6NameResolution = false;
+            }
         }
     }
 }

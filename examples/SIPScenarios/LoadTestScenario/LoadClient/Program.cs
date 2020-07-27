@@ -82,11 +82,7 @@ namespace SIPSorcery
             //Task.Run(() => OnKeyPress(exitCts));
             //exitCts.Token.WaitHandle.WaitOne();
 
-            #region Cleanup.
-
             Log.LogInformation("Exiting...");
-
-            #endregion
         }
 
         private static Task<bool> PlaceCall(CancellationToken cancel)

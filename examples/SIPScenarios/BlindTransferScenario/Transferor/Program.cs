@@ -244,7 +244,7 @@ namespace SIPSorcery
         /// <summary>
         /// Diagnostic handler to print out our RTCP reports from the remote WebRTC peer.
         /// </summary>
-        private static void RtpSession_OnReceiveReport(IPEndPoint endPoint, SDPMediaTypesEnum mediaType, RTCPCompoundPacket recvRtcpReport)
+        private static void RtpSession_OnReceiveReport(IPEndPoint remoteEndPoint, SDPMediaTypesEnum mediaType, RTCPCompoundPacket recvRtcpReport)
         {
             Log.LogDebug($"RTCP {mediaType} CNAME {recvRtcpReport.SDesReport.CNAME} SSRC {recvRtcpReport.SDesReport.SSRC}.");
 

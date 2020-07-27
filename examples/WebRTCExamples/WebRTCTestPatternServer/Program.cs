@@ -145,7 +145,12 @@ namespace WebRTCServer
             {
                 logger.LogDebug($"Peer connection state change to {state}.");
 
-                if (state == RTCPeerConnectionState.closed || state == RTCPeerConnectionState.disconnected || state == RTCPeerConnectionState.failed)
+                if(state == RTCPeerConnectionState.disconnected || state == RTCPeerConnectionState.failed)
+                {
+                    pc.Close("remote disconnection");
+                }
+
+                if (state == RTCPeerConnectionState.closed)
                 {
                     OnTestPatternSampleReady -= pc.SendMedia;
                     pc.OnReceiveReport -= RtpSession_OnReceiveReport;
@@ -155,7 +160,11 @@ namespace WebRTCServer
                 else if (state == RTCPeerConnectionState.connected)
                 {
                     OnTestPatternSampleReady += pc.SendMedia;
-                    _sendTestPatternTimer = new Timer(SendTestPattern, null, 0, TEST_PATTERN_SPACING_MILLISECONDS);
+
+                    if (_sendTestPatternTimer == null)
+                    {
+                        _sendTestPatternTimer = new Timer(SendTestPattern, null, 0, TEST_PATTERN_SPACING_MILLISECONDS);
+                    }
                 }
             };
 
@@ -351,7 +360,7 @@ namespace WebRTCServer
         /// <summary>
         /// Diagnostic handler to print out our RTCP reports from the remote WebRTC peer.
         /// </summary>
-        private static void RtpSession_OnReceiveReport(SDPMediaTypesEnum mediaType, RTCPCompoundPacket recvRtcpReport)
+        private static void RtpSession_OnReceiveReport(IPEndPoint remoteEndPoint, SDPMediaTypesEnum mediaType, RTCPCompoundPacket recvRtcpReport)
         {
             if (recvRtcpReport.Bye != null)
             {
