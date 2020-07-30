@@ -369,25 +369,25 @@ namespace SIPSorcery.Net
                         _dtlsHandle.OnAlert += OnDtlsAlert;
 
                         logger.LogDebug($"Starting DLS handshake with role {IceRole}.");
-                        Task.Run<bool>(() => DoDtlsHandshake(_dtlsHandle))
-                        .ContinueWith(t =>
+                        Task.Run(() =>
                         {
-                            if (t.IsFaulted)
+                            try
                             {
-                                logger.LogWarning($"RTCPeerConnection DTLS handshake task completed in a faulted state. {t.Exception?.Flatten().Message}");
-
-                                connectionState = RTCPeerConnectionState.failed;
-                                onconnectionstatechange?.Invoke(connectionState);
-                            }
-                            else
-                            {
-                                connectionState = (t.Result) ? RTCPeerConnectionState.connected : connectionState = RTCPeerConnectionState.failed;
+                                var res = DoDtlsHandshake(_dtlsHandle);
+                                connectionState = res ? RTCPeerConnectionState.connected : connectionState = RTCPeerConnectionState.failed;
                                 onconnectionstatechange?.Invoke(connectionState);
 
                                 if (connectionState == RTCPeerConnectionState.connected && RemoteDescription.Media.Any(x => x.Media == SDPMediaTypesEnum.application))
                                 {
                                     InitialiseSctpAssociation();
                                 }
+                            }
+                            catch (Exception e)
+                            { 
+                                logger.LogWarning($"RTCPeerConnection DTLS handshake task completed in a faulted state. {e?.Message}");
+
+                                connectionState = RTCPeerConnectionState.failed;
+                                onconnectionstatechange?.Invoke(connectionState);
                             }
                         });
                     }
@@ -444,14 +444,25 @@ namespace SIPSorcery.Net
 
                 if(!isLocal)
                 {
-                    // A new data channel that was opened by the remote peer.
-                    RTCDataChannel dataChannel = new RTCDataChannel
+                    var dataChannel = DataChannels.Where(n => n.label == stm.getLabel()).FirstOrDefault();
+                    if (dataChannel == null)
                     {
-                        label = stm.getLabel(),
-                        id = (ushort)stm.getNum()
-                    };
+                        dataChannel = new RTCDataChannel
+                        {
+                            label = stm.getLabel(),
+                            id = (ushort)stm.getNum()
+                        };
+                    }
+                    else
+                    {
+                        dataChannel.id = (ushort)stm.getNum();
+                    }
+                    // A new data channel that was opened by the remote peer.
                     dataChannel.SetStream(stm);
-                    DataChannels.Add(dataChannel);
+                    if (!DataChannels.Contains(dataChannel))
+                    {
+                        DataChannels.Add(dataChannel);
+                    }
 
                     ondatachannel?.Invoke(dataChannel);
                 }

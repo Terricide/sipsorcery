@@ -20,6 +20,7 @@ namespace SIPSorcery.Sys
 {
     internal class PipedMemoryStream
     {
+        private object thisLock = new object();
         private readonly MemoryStream _ms = new MemoryStream();
         private long _writePos = 0;
         private long _readPos = 0;
@@ -30,16 +31,16 @@ namespace SIPSorcery.Sys
 
         public void Close()
         {
-            lock (this)
+            lock (thisLock)
             {
                 _isClosed = true;
-                Monitor.PulseAll(this);
+                Monitor.PulseAll(thisLock);
             }
         }
 
         public int Read(byte[] buffer, int offset, int count, int timeout)
         {
-            lock (this)
+            lock (thisLock)
             {
                 if (WaitForData(timeout))
                 {
@@ -62,7 +63,7 @@ namespace SIPSorcery.Sys
 
         public void Write(byte[] buf, int off, int len)
         {
-            lock (this)
+            lock (thisLock)
             {
                 if (_ms.Position != _writePos)
                 {
@@ -72,7 +73,7 @@ namespace SIPSorcery.Sys
                 _ms.Write(buf, off, len);
                 _writePos += len;
 
-                Monitor.PulseAll(this);
+                Monitor.PulseAll(thisLock);
             }
         }
 
@@ -80,7 +81,7 @@ namespace SIPSorcery.Sys
         {
             if (_readPos >= _writePos && !_isClosed)
             {
-                return Monitor.Wait(this, timeout);
+                return Monitor.Wait(thisLock, timeout);
             }
             else
             {

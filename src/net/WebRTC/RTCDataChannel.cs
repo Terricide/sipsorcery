@@ -63,6 +63,10 @@ namespace SIPSorcery.Net
 
         internal void SetStream(SCTPStream s)
         {
+            if (s == _sctpStream)
+            {
+                return;
+            }
             _sctpStream = s;
             s.setSCTPStreamListener(this);
             s.OnOpen = OnStreamOpened;

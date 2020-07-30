@@ -16,6 +16,7 @@
  */
 // Modified by Andrés Leone Gámez
 
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using Microsoft.Extensions.Logging;
@@ -29,6 +30,7 @@ namespace SIPSorcery.Net.Sctp
 {
     public class BlockingSCTPStream : SCTPStream
     {
+        private object sendLock = new object();
         private Dictionary<int, SCTPMessage> undeliveredOutboundMessages = new Dictionary<int, SCTPMessage>();
 
         private static ILogger logger = Log.Logger;
@@ -37,32 +39,54 @@ namespace SIPSorcery.Net.Sctp
 
         public override void send(string message)
         {
-            lock (this)
+            if (Monitor.TryEnter(sendLock, 60000))
             {
-                Association a = base.getAssociation();
-                SCTPMessage m = a.makeMessage(message, this);
-                if (m == null)
+                try
                 {
-                    logger.LogError("SCTPMessage cannot be null, but it is");
+                    Association a = base.getAssociation();
+                    SCTPMessage m = a.makeMessage(message, this);
+                    if (m == null)
+                    {
+                        logger.LogError("SCTPMessage cannot be null, but it is");
+                    }
+                    a.sendAndBlock(m);
                 }
-                a.sendAndBlock(m);
+                finally
+                {
+                    Monitor.Exit(sendLock);
+                }
+            }
+            else
+            {
+                throw new TimeoutException("Unable to send in 30 seconds");
             }
         }
 
         public override void send(byte[] message)
         {
-            lock (this)
+            if (Monitor.TryEnter(sendLock, 60000))
             {
-                Association a = base.getAssociation();
-                SCTPMessage m = a.makeMessage(message, this);
-                undeliveredOutboundMessages.Add(m.getSeq(), m);
-                a.sendAndBlock(m);
+                try
+                {
+                    Association a = base.getAssociation();
+                    SCTPMessage m = a.makeMessage(message, this);
+                    undeliveredOutboundMessages.Add(m.getSeq(), m);
+                    a.sendAndBlock(m);
+                }
+                finally
+                {
+                    Monitor.Exit(sendLock);
+                }
+            }
+            else
+            {
+                throw new TimeoutException("Unable to send in 30 seconds");
             }
         }
 
         internal override void deliverMessage(SCTPMessage message)
         {
-            ThreadPool.QueueUserWorkItem((obj) => { message.run(); });
+            System.Threading.Tasks.Task.Run(message.run);
         }
 
         public override void delivered(DataChunk d)

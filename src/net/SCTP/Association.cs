@@ -344,13 +344,14 @@ namespace SIPSorcery.Net.Sctp
             return true;
         }
 
+        private object myLock = new object();
         protected void send(Chunk[] c)
         {
             if ((c != null) && (c.Length > 0))
             {
                 ByteBuffer obb = mkPkt(c);
                 //logger.LogDebug($"SCTP packet send: {Packet.getHex(obb)}");
-                lock (this)
+                lock (myLock)
                 {
                     _transp.Send(obb.Data, obb.offset, obb.Limit);
                 }

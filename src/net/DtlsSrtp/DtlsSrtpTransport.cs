@@ -467,7 +467,13 @@ namespace SIPSorcery.Net
 
         public void Send(byte[] buf, int off, int len)
         {
-            OnDataReady?.Invoke(buf.Skip(off).Take(len).ToArray());
+            byte[] temp = buf;
+            if (buf.Length != len || off != 0)
+            {
+                temp = new byte[len];
+                Buffer.BlockCopy(buf, off, temp, 0, len);
+            }
+            OnDataReady?.Invoke(temp);
         }
 
         public virtual void Close()

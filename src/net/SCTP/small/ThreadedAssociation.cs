@@ -31,6 +31,25 @@ using SIPSorcery.Sys;
  */
 namespace SIPSorcery.Net.Sctp
 {
+    public class ThreadLock
+    {
+        private ThreadLock()
+        {
+
+        }
+
+        public static ThreadLock Instance = new ThreadLock();
+
+        private object myLock = new object();
+        public void Execute(Action a)
+        {
+            lock (myLock)
+            {
+                a.Invoke();
+            }
+        }
+    }
+
     public class ThreadedAssociation : Association
     {
         static int MAXBLOCKS = 10; // some number....
@@ -48,7 +67,7 @@ namespace SIPSorcery.Net.Sctp
 
 		 Note: This variable is kept on the entire association.
 		 */
-        private long _rwnd;
+        private  long _rwnd;
         /*
 		 o  Congestion control window (cwnd, in bytes), which is adjusted by
 		 the sender based on observed network conditions.
@@ -57,6 +76,7 @@ namespace SIPSorcery.Net.Sctp
 		 basis.
 		 */
         private long _cwnd;
+
         // assume a single destination via ICE
         /*
 			 o  Slow-start threshold (ssthresh, in bytes), which is used by the
@@ -430,7 +450,7 @@ namespace SIPSorcery.Net.Sctp
 		 */
         public override Chunk[] inboundInit(InitChunk init)
         {
-            _rwnd = init.getAdRecWinCredit();
+            ThreadLock.Instance.Execute(() => _rwnd = init.getAdRecWinCredit());
             setSsthresh(init);
             return base.inboundInit(init);
         }
@@ -442,10 +462,10 @@ namespace SIPSorcery.Net.Sctp
 
         private void reduceRwnd(int dataSize)
         {
-            _rwnd -= dataSize;
+            ThreadLock.Instance.Execute(() => _rwnd -= dataSize);
             if (_rwnd < 0)
             {
-                _rwnd = 0;
+                ThreadLock.Instance.Execute(() => _rwnd = 0);
             }
         }
         /*
@@ -460,7 +480,7 @@ namespace SIPSorcery.Net.Sctp
 
         private void incrRwnd(int dataSize)
         {
-            _rwnd += dataSize;
+            ThreadLock.Instance.Execute(() => _rwnd += dataSize);
         }
         /*
 
@@ -590,7 +610,7 @@ namespace SIPSorcery.Net.Sctp
                         }
                     }
                 }
-                _rwnd = sack.getArWin() - totalDataInFlight;
+                ThreadLock.Instance.Execute(() => _rwnd = sack.getArWin() - totalDataInFlight);
                 //logger.LogDebug("Setting rwnd to " + _rwnd);
                 bool advanced = (_lastCumuTSNAck < ackedTo);
                 adjustCwind(advanced, totalDataInFlight, totalAcked);
@@ -620,7 +640,7 @@ namespace SIPSorcery.Net.Sctp
 		 */
         protected void resetCwnd()
         {
-            _cwnd = Math.Min(4 * _transpMTU, Math.Max(2 * _transpMTU, 4380));
+            ThreadLock.Instance.Execute(() => _cwnd = Math.Min(4 * _transpMTU, Math.Max(2 * _transpMTU, 4380)));
             lock (_congestion)
             {
                 Monitor.PulseAll(_congestion);
@@ -633,7 +653,7 @@ namespace SIPSorcery.Net.Sctp
 
         protected void setCwndPostRetrans()
         {
-            _cwnd = _transpMTU;
+            ThreadLock.Instance.Execute(() => _cwnd = _transpMTU);
             lock (_congestion)
             {
                 Monitor.PulseAll(_congestion);
@@ -649,7 +669,7 @@ namespace SIPSorcery.Net.Sctp
 
         void setSsthresh(InitChunk init)
         {
-            this._ssthresh = init.getAdRecWinCredit();
+            ThreadLock.Instance.Execute(() => this._ssthresh = init.getAdRecWinCredit());
         }
 
         /*
@@ -663,7 +683,7 @@ namespace SIPSorcery.Net.Sctp
             if (!maysend)
             {
                 maysend = (sz <= _cwnd);
-                _cwnd -= sz;
+                ThreadLock.Instance.Execute(() => _cwnd -= sz);
             }
             //logger.LogDebug("MaySend " + maysend + " rwnd = " + _rwnd + " cwnd = " + _cwnd + " sz = " + sz);
             return maysend;
@@ -694,7 +714,7 @@ namespace SIPSorcery.Net.Sctp
                 if (didAdvance && fullyUtilized)
                 {// && !_fastRecovery) {
                     int incCwinBy = Math.Min(_transpMTU, totalAcked);
-                    _cwnd += incCwinBy;
+                    ThreadLock.Instance.Execute(() => _cwnd += incCwinBy);
                     //logger.LogDebug("cwnd now " + _cwnd);
                 }
                 //else
@@ -749,11 +769,11 @@ namespace SIPSorcery.Net.Sctp
 				 */
                 if (didAdvance)
                 {
-                    _partial_bytes_acked += totalAcked;
+                    ThreadLock.Instance.Execute(() => _partial_bytes_acked += totalAcked);
                     if ((_partial_bytes_acked >= _cwnd) && fullyUtilized)
                     {
-                        _cwnd += _transpMTU;
-                        _partial_bytes_acked -= _cwnd;
+                        ThreadLock.Instance.Execute(() => _cwnd += _transpMTU);
+                        ThreadLock.Instance.Execute(() => _partial_bytes_acked -= _cwnd);
                     }
                 }
             }
