@@ -406,7 +406,7 @@ namespace SIPSorcery.Net.Sctp
                     }
                     else
                     {
-                       // logger.LogDebug("Got an INIT when state was " + _state.ToString() + " - ignoring it for now ");
+                        // logger.LogDebug("Got an INIT when state was " + _state.ToString() + " - ignoring it for now ");
                     }
                     break;
                 case ChunkType.INITACK:
@@ -458,9 +458,9 @@ namespace SIPSorcery.Net.Sctp
                     break;
                 case ChunkType.ERROR:
                     logger.LogWarning($"SCTP error chunk received.");
-                    foreach(var vparam in c._varList)
+                    foreach (var vparam in c._varList)
                     {
-                        if(vparam is KnownError)
+                        if (vparam is KnownError)
                         {
                             var knownErr = vparam as KnownError;
                             logger.LogWarning($"{knownErr.getName()}, {knownErr}");
