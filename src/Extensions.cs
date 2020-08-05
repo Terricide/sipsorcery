@@ -1,9 +1,6 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
-using System.Security.Cryptography;
-using System.Text;
 
 namespace SIPSorcery
 {
@@ -108,5 +105,25 @@ namespace SIPSorcery
             return address.IsIPv4MappedToIPv6;
 #endif
         }
+
+#if NET20
+        public static byte[] ToArray(this ArraySegment<byte> arr)
+        {
+            return arr.Array;
+        }
+#endif
     }
+
+#if NET20
+    public static class RuntimeInformation
+    {
+        public static string OSDescription
+        {
+            get
+            {
+                return "Microsoft Windows";
+            }
+        }
+    }
+#endif
 }
