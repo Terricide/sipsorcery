@@ -31,24 +31,31 @@ using SIPSorcery.Sys;
  */
 namespace SIPSorcery.Net.Sctp
 {
-    public class ThreadLock
-    {
-        private ThreadLock()
-        {
+    //public class ThreadLock
+    //{
+    //    private ThreadLock()
+    //    {
 
-        }
+    //    }
 
-        public static ThreadLock Instance = new ThreadLock();
+    //    public static ThreadLock Instance = new ThreadLock();
 
-        private object myLock = new object();
-        public void Execute(Action a)
-        {
-            lock (myLock)
-            {
-                a.Invoke();
-            }
-        }
-    }
+    //    private object myLock = new object();
+    //    public void Execute(Action a)
+    //    {
+    //        lock (myLock)
+    //        {
+    //            a.Invoke();
+    //        }
+    //    }
+    //    public T Execute<T>(Func<T> a)
+    //    {
+    //        lock (myLock)
+    //        {
+    //            return a.Invoke();
+    //        }
+    //    }
+    //}
 
     public class ThreadedAssociation : Association
     {
@@ -67,7 +74,32 @@ namespace SIPSorcery.Net.Sctp
 
 		 Note: This variable is kept on the entire association.
 		 */
-        private  long _rwnd;
+        private object _RwndLock = new object();
+        private long _Rwnd;
+        private long _rwnd
+        {
+            get
+            {
+                lock (_RwndLock)
+                {
+                    return _Rwnd;
+                }
+            }
+            set
+            {
+                lock (_RwndLock)
+                {
+                    if (_Rwnd != value)
+                    {
+                        if (value < 0)
+                        {
+                            value = 0;
+                        }
+                        _Rwnd = value;
+                    }
+                }
+            }
+        }
         /*
 		 o  Congestion control window (cwnd, in bytes), which is adjusted by
 		 the sender based on observed network conditions.
@@ -75,7 +107,25 @@ namespace SIPSorcery.Net.Sctp
 		 Note: This variable is maintained on a per-destination-address
 		 basis.
 		 */
-        private long _cwnd;
+        private long _Cwnd;
+        private long _cwnd
+        {
+            get
+            {
+                return _Cwnd;
+            }
+            set
+            {
+                if (_Cwnd != value)
+                {
+                    if (value < 0)
+                    {
+                        value = 0;
+                    }
+                    _Cwnd = value;
+                }
+            }
+        }
 
         // assume a single destination via ICE
         /*
@@ -284,6 +334,7 @@ namespace SIPSorcery.Net.Sctp
                 try
                 {
                     send(toSend);
+                    //incrRwnd(d.getDataSize());
                     //logger.LogDebug("sent, syncing on inFlight... " + d.getTsn());
                     lock (_inFlight)
                     {
@@ -450,7 +501,7 @@ namespace SIPSorcery.Net.Sctp
 		 */
         public override Chunk[] inboundInit(InitChunk init)
         {
-            ThreadLock.Instance.Execute(() => _rwnd = init.getAdRecWinCredit());
+            _rwnd = init.getAdRecWinCredit();
             setSsthresh(init);
             return base.inboundInit(init);
         }
@@ -462,10 +513,10 @@ namespace SIPSorcery.Net.Sctp
 
         private void reduceRwnd(int dataSize)
         {
-            ThreadLock.Instance.Execute(() => _rwnd -= dataSize);
+            _rwnd -= dataSize;
             if (_rwnd < 0)
             {
-                ThreadLock.Instance.Execute(() => _rwnd = 0);
+                _rwnd = 0;
             }
         }
         /*
@@ -480,7 +531,7 @@ namespace SIPSorcery.Net.Sctp
 
         private void incrRwnd(int dataSize)
         {
-            ThreadLock.Instance.Execute(() => _rwnd += dataSize);
+            _rwnd += dataSize;
         }
         /*
 
@@ -526,10 +577,10 @@ namespace SIPSorcery.Net.Sctp
                     List<long> removals = new List<long>();
                     foreach (var kvp in _inFlight)
                     {
-                        if (kvp.Key <= ackedTo)
-                        {
+                        //if (kvp.Key <= ackedTo)
+                        //{
                             removals.Add(kvp.Key);
-                        }
+                        //}
                     }
                     foreach (long k in removals)
                     {
@@ -585,10 +636,10 @@ namespace SIPSorcery.Net.Sctp
                                 d.setGapAck(true);
                                 totalAcked += d.getDataSize();
                             }
-                            else
-                            {
-                                logger.LogDebug("Huh? gap for something not inFlight ?!? " + t);
-                            }
+                            //else
+                            //{
+                            //    logger.LogDebug("Huh? gap for something not inFlight ?!? " + t);
+                            //}
                         }
                     }
                 }
@@ -610,12 +661,11 @@ namespace SIPSorcery.Net.Sctp
                         }
                     }
                 }
-                ThreadLock.Instance.Execute(() => _rwnd = sack.getArWin() - totalDataInFlight);
+                _rwnd = sack.getArWin() - totalDataInFlight;
                 //logger.LogDebug("Setting rwnd to " + _rwnd);
                 bool advanced = (_lastCumuTSNAck < ackedTo);
                 adjustCwind(advanced, totalDataInFlight, totalAcked);
                 _lastCumuTSNAck = ackedTo;
-
             }
             else
             {
@@ -640,7 +690,7 @@ namespace SIPSorcery.Net.Sctp
 		 */
         protected void resetCwnd()
         {
-            ThreadLock.Instance.Execute(() => _cwnd = Math.Min(4 * _transpMTU, Math.Max(2 * _transpMTU, 4380)));
+            _cwnd = Math.Min(4 * _transpMTU, Math.Max(2 * _transpMTU, 4380));
             lock (_congestion)
             {
                 Monitor.PulseAll(_congestion);
@@ -653,7 +703,7 @@ namespace SIPSorcery.Net.Sctp
 
         protected void setCwndPostRetrans()
         {
-            ThreadLock.Instance.Execute(() => _cwnd = _transpMTU);
+            _cwnd = _transpMTU;
             lock (_congestion)
             {
                 Monitor.PulseAll(_congestion);
@@ -669,7 +719,7 @@ namespace SIPSorcery.Net.Sctp
 
         void setSsthresh(InitChunk init)
         {
-            ThreadLock.Instance.Execute(() => this._ssthresh = init.getAdRecWinCredit());
+            this._ssthresh = init.getAdRecWinCredit();
         }
 
         /*
@@ -682,8 +732,9 @@ namespace SIPSorcery.Net.Sctp
             bool maysend = (sz <= _rwnd);
             if (!maysend)
             {
-                maysend = (sz <= _cwnd);
-                ThreadLock.Instance.Execute(() => _cwnd -= sz);
+                maysend = _cwnd > 0;
+                //maysend = (sz <= _cwnd);
+                //_cwnd -= sz;
             }
             //logger.LogDebug("MaySend " + maysend + " rwnd = " + _rwnd + " cwnd = " + _cwnd + " sz = " + sz);
             return maysend;
@@ -714,7 +765,7 @@ namespace SIPSorcery.Net.Sctp
                 if (didAdvance && fullyUtilized)
                 {// && !_fastRecovery) {
                     int incCwinBy = Math.Min(_transpMTU, totalAcked);
-                    ThreadLock.Instance.Execute(() => _cwnd += incCwinBy);
+                    _cwnd += incCwinBy;
                     //logger.LogDebug("cwnd now " + _cwnd);
                 }
                 //else
@@ -726,54 +777,54 @@ namespace SIPSorcery.Net.Sctp
             else
             {
                 /*
-				 7.2.2.  Congestion Avoidance
+                 7.2.2.  Congestion Avoidance
 
-				 When cwnd is greater than ssthresh, cwnd should be incremented by
-				 1*MTU per RTT if the sender has cwnd or more bytes of data
-				 outstanding for the corresponding transport address.
+                 When cwnd is greater than ssthresh, cwnd should be incremented by
+                 1*MTU per RTT if the sender has cwnd or more bytes of data
+                 outstanding for the corresponding transport address.
 
-				 In practice, an implementation can achieve this goal in the following
-				 way:
+                 In practice, an implementation can achieve this goal in the following
+                 way:
 
-				 o  partial_bytes_acked is initialized to 0.
+                 o  partial_bytes_acked is initialized to 0.
 
-				 o  Whenever cwnd is greater than ssthresh, upon each SACK arrival
-				 that advances the Cumulative TSN Ack Point, increase
-				 partial_bytes_acked by the total number of bytes of all new chunks
-				 acknowledged in that SACK including chunks acknowledged by the new
-				 Cumulative TSN Ack and by Gap Ack Blocks.
+                 o  Whenever cwnd is greater than ssthresh, upon each SACK arrival
+                 that advances the Cumulative TSN Ack Point, increase
+                 partial_bytes_acked by the total number of bytes of all new chunks
+                 acknowledged in that SACK including chunks acknowledged by the new
+                 Cumulative TSN Ack and by Gap Ack Blocks.
 
-				 o  When partial_bytes_acked is equal to or greater than cwnd and
-				 before the arrival of the SACK the sender had cwnd or more bytes
-				 of data outstanding (i.e., before arrival of the SACK, flightsize
-				 was greater than or equal to cwnd), increase cwnd by MTU, and
-				 reset partial_bytes_acked to (partial_bytes_acked - cwnd).
+                 o  When partial_bytes_acked is equal to or greater than cwnd and
+                 before the arrival of the SACK the sender had cwnd or more bytes
+                 of data outstanding (i.e., before arrival of the SACK, flightsize
+                 was greater than or equal to cwnd), increase cwnd by MTU, and
+                 reset partial_bytes_acked to (partial_bytes_acked - cwnd).
 
-				 o  Same as in the slow start, when the sender does not transmit DATA
-				 on a given transport address, the cwnd of the transport address
-				 should be adjusted to max(cwnd / 2, 4*MTU) per RTO.
-
-
+                 o  Same as in the slow start, when the sender does not transmit DATA
+                 on a given transport address, the cwnd of the transport address
+                 should be adjusted to max(cwnd / 2, 4*MTU) per RTO.
 
 
 
-				 Stewart                     Standards Track                    [Page 97]
+
+
+                 Stewart                     Standards Track                    [Page 97]
 
-				 RFC 4960          Stream Control Transmission Protocol    September 2007
+                 RFC 4960          Stream Control Transmission Protocol    September 2007
 
 
-				 o  When all of the data transmitted by the sender has been
-				 acknowledged by the receiver, partial_bytes_acked is initialized
-				 to 0.
+                 o  When all of the data transmitted by the sender has been
+                 acknowledged by the receiver, partial_bytes_acked is initialized
+                 to 0.
 
-				 */
+                 */
                 if (didAdvance)
                 {
-                    ThreadLock.Instance.Execute(() => _partial_bytes_acked += totalAcked);
+                    _partial_bytes_acked += totalAcked;
                     if ((_partial_bytes_acked >= _cwnd) && fullyUtilized)
                     {
-                        ThreadLock.Instance.Execute(() => _cwnd += _transpMTU);
-                        ThreadLock.Instance.Execute(() => _partial_bytes_acked -= _cwnd);
+                        _cwnd += _transpMTU;
+                        _partial_bytes_acked -= _cwnd;
                     }
                 }
             }

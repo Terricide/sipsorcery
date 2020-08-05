@@ -70,6 +70,10 @@ namespace SIPSorcery.Net.Sctp
                 {
                     Association a = base.getAssociation();
                     SCTPMessage m = a.makeMessage(message, this);
+                    while (undeliveredOutboundMessages.Count > 1)
+                    {
+                        Thread.Sleep(10);
+                    }
                     undeliveredOutboundMessages.Add(m.getSeq(), m);
                     a.sendAndBlock(m);
                 }

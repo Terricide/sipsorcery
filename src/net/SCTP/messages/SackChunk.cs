@@ -43,7 +43,10 @@ namespace SIPSorcery.Net.Sctp
 		 */
         public void setCumuTSNAck(uint cumuTSNAck)
         {
-            _cumuTSNAck = cumuTSNAck;
+            if (_cumuTSNAck != cumuTSNAck)
+            {
+                _cumuTSNAck = cumuTSNAck;
+            }
         }
 
         /**

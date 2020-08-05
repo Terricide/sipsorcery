@@ -387,11 +387,11 @@ namespace SIPSorcery.Net
                         _dtlsHandle.OnAlert += OnDtlsAlert;
 
                         logger.LogDebug($"Starting DLS handshake with role {IceRole}.");
-                        Task.Run(() =>
+                        Task.Run(async () =>
                         {
                             try
                             {
-                                var res = DoDtlsHandshake(_dtlsHandle);
+                                var res = await DoDtlsHandshake(_dtlsHandle).ConfigureAwait(false);
                                 connectionState = res ? RTCPeerConnectionState.connected : connectionState = RTCPeerConnectionState.failed;
                                 onconnectionstatechange?.Invoke(connectionState);
 

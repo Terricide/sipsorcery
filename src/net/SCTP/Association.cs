@@ -17,10 +17,12 @@
 // Modified by Andrés Leone Gámez
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Net.Sockets;
 using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Org.BouncyCastle.Crypto.Tls;
 using Org.BouncyCastle.Security;
@@ -129,7 +131,7 @@ namespace SIPSorcery.Net.Sctp
         public uint _nearTSN;
         private int _srcPort;
         private int _destPort;
-        private Dictionary<int, SCTPStream> _streams;
+        private ConcurrentDictionary<int, SCTPStream> _streams;
         private AssociationListener _al;
         private Dictionary<long, DataChunk> _outbound;
         protected State _state;
@@ -163,7 +165,7 @@ namespace SIPSorcery.Net.Sctp
             _random = new SecureRandom();
             _myVerTag = _random.NextInt();
             _transp = transport;
-            _streams = new Dictionary<int, SCTPStream>();
+            _streams = new ConcurrentDictionary<int, SCTPStream>();
             _outbound = new Dictionary<long, DataChunk>();
             _holdingPen = new Dictionary<uint, DataChunk>();
             var IInt = new FastBit.Int(_random.NextInt());
@@ -276,29 +278,47 @@ namespace SIPSorcery.Net.Sctp
             }
         }
 
+        private BlockingCollection<ByteBuffer> queue = new BlockingCollection<ByteBuffer>();
+        private ConcurrentQueue<byte[]> bufferQueue = new ConcurrentQueue<byte[]>();
+
+        private void ProcessQueue(CancellationToken token)
+        {
+            while (!token.IsCancellationRequested)
+            {
+                while (queue.TryTake(out var pbb, 1000))
+                {
+                    Packet rec = new Packet(pbb);
+                    deal(rec);
+                    bufferQueue.Enqueue(pbb.Data);
+                }
+            }
+        }
+
         void startRcv()
         {
             Association me = this;
+            var cts = new CancellationTokenSource();
             _rcv = new Thread(() =>
             {
                 try
                 {
-                    byte[] buf = new byte[_transp.GetReceiveLimit()];
                     while (_rcv != null)
                     {
                         try
                         {
+                            if (!bufferQueue.TryDequeue(out var buf))
+                            {
+                                buf = new byte[_transp.GetReceiveLimit()];
+                            }
                             int length = _transp.Receive(buf, 0, buf.Length, TICK);
                             if (length == DtlsSrtpTransport.DTLS_RECEIVE_ERROR_CODE)
                             {
                                 // The DTLS transport has been closed or i no longer available.
                                 break;
                             }
-                            //logger.LogDebug("SCTP message received: " + Packet.getHex(buf, 0, length));
                             ByteBuffer pbb = new ByteBuffer(buf);
                             pbb.Limit = length;
-                            Packet rec = new Packet(pbb);
-                            deal(rec);
+                            queue.Add(pbb);
                         }
                         catch (SocketException e)
                         {
@@ -326,10 +346,16 @@ namespace SIPSorcery.Net.Sctp
                 {
                     logger.LogDebug("Association receive failed " + ex.GetType().Name + " " + ex.ToString());
                 }
+                finally
+                {
+                    cts.Cancel();
+                }
             });
             _rcv.Priority = ThreadPriority.AboveNormal;
             _rcv.Name = "AssocRcv" + __assocNo;
             _rcv.Start();
+
+            Task.Run(() => ProcessQueue(cts.Token));
         }
 
         /**
@@ -709,7 +735,7 @@ namespace SIPSorcery.Net.Sctp
             if (!_streams.TryGetValue(sno, out _in))
             {
                 _in = mkStream(sno);
-                _streams.Add(sno, _in);
+                _streams.AddOrUpdate(sno, _in, (a,b) => _in);
                 _al.onRawStream(_in);
             }
             Chunk[] repa;
@@ -773,14 +799,15 @@ namespace SIPSorcery.Net.Sctp
                 bool gap = false;
                 for (uint t = _farTSN + 1; !gap; t++)
                 {
-                    if (_holdingPen.TryGetValue(t, out dc))
+                    if (_holdingPen.TryGetValue(t, out var dc1))
                     {
                         _holdingPen.Remove(t);
-                        ingest(dc, rep);
+                        ingest(dc1, rep);
                     }
                     else
                     {
                         //logger.LogDebug("gap in inbound tsns at " + t);
+                        ingest(dc, rep);
                         gap = true;
                     }
                 }
@@ -1016,8 +1043,7 @@ namespace SIPSorcery.Net.Sctp
 
         public SCTPStream delStream(int s)
         {
-            var st = _streams[s];
-            _streams.Remove(s);
+            _streams.TryRemove(s, out var st);
             return st;
         }
 
@@ -1035,7 +1061,7 @@ namespace SIPSorcery.Net.Sctp
                     }
                     sout = mkStream(sno);
                     sout.setLabel(label);
-                    _streams.Add(sno, sout);
+                    _streams.AddOrUpdate(sno, sout, (a,b) => sout);
                 }// todo - move this to behave
                 DataChunk DataChannelOpen = DataChunk.mkDataChannelOpen(label);
                 sout.outbound(DataChannelOpen);
