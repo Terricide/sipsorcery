@@ -530,23 +530,19 @@ namespace SIPSorcery.Net
             List<IPAddress> localAddresses = null;
             if (IPAddress.IPv6Any.Equals(rtpBindAddress))
             {
-#if !NET20
-                if (base.RtpSocket.DualMode)
+                if (base.RtpSocket.DualMode())
                 {
                     // IPv6 dual mode listening on [::] means we can use all valid local addresses.
                     localAddresses = NetServices.GetLocalAddressesOnInterface(_bindAddress)
-                        .Where(x => !IPAddress.IsLoopback(x) && !x.IsIPv4MappedToIPv6 && !x.IsIPv6SiteLocal).ToList();
+                        .Where(x => !IPAddress.IsLoopback(x) && !x.IsIPv4MappedToIPv6() && !x.IsIPv6SiteLocal).ToList();
                 }
                 else
                 {
-#endif
                     // IPv6 but not dual mode on [::] means can use all valid local IPv6 addresses.
                     localAddresses = NetServices.GetLocalAddressesOnInterface(_bindAddress)
                         .Where(x => x.AddressFamily == AddressFamily.InterNetworkV6
                         && !IPAddress.IsLoopback(x) && !x.IsIPv4MappedToIPv6() && !x.IsIPv6SiteLocal).ToList();
-#if !NET20
                 }
-#endif
             }
             else if (IPAddress.Any.Equals(rtpBindAddress))
             {
