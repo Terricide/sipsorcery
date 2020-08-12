@@ -64,6 +64,7 @@ using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -289,7 +290,7 @@ namespace SIPSorcery.Net
         {
             if (_dnsLookupClient == null)
             {
-                if(DefaultNameServers != null)
+                if (DefaultNameServers != null)
                 {
                     _dnsLookupClient = new DnsClient.LookupClient(DefaultNameServers.ToArray());
                 }
@@ -297,7 +298,6 @@ namespace SIPSorcery.Net
                 {
                     _dnsLookupClient = new DnsClient.LookupClient();
                 }
-               
             }
 
             _bindAddress = bindAddress;
@@ -322,6 +322,24 @@ namespace SIPSorcery.Net
                 RTCIceCandidateType.host,
                 null,
                 0);
+
+            if (iceServers != null)
+            {
+                InitialiseIceServers(_iceServers);
+
+                // DNS is only needed if there are ICE server hostnames to lookup.
+                if (_dnsLookupClient == null && _iceServerConnections.Any( x => !IPAddress.TryParse(x.Key.Host, out _)))
+                {
+                    if (DefaultNameServers != null)
+                    {
+                        _dnsLookupClient = new DnsClient.LookupClient(DefaultNameServers.ToArray());
+                    }
+                    else
+                    {
+                        _dnsLookupClient = new DnsClient.LookupClient();
+                    }
+                }
+            }
         }
 
         /// <summary>
@@ -349,7 +367,7 @@ namespace SIPSorcery.Net
 
                 logger.LogDebug($"RTP ICE Channel discovered {_candidates.Count} local candidates.");
 
-                if (_iceServers != null)
+                if (_iceServerConnections?.Count > 0)
                 {
                     InitialiseIceServers(_iceServers);
                     _processIceServersTimer = new Timer(CheckIceServers, null, 0, Ta);
@@ -686,7 +704,7 @@ namespace SIPSorcery.Net
                         logger.LogDebug("RTP ICE Channel was not able to acquire an active ICE server, stopping ICE servers timer.");
                         _processIceServersTimer.Dispose();
                     }
-                    else if((_activeIceServer._uri.Scheme == STUNSchemesEnum.turn && _activeIceServer.RelayEndPoint != null) ||
+                    else if ((_activeIceServer._uri.Scheme == STUNSchemesEnum.turn && _activeIceServer.RelayEndPoint != null) ||
                         (_activeIceServer._uri.Scheme == STUNSchemesEnum.stun && _activeIceServer.ServerReflexiveEndPoint != null))
                     {
                         // Successfully set up the ICE server. Do nothing.
@@ -970,15 +988,19 @@ namespace SIPSorcery.Net
 
             if (existingEntry != null)
             {
-                if (entry.Priority > existingEntry.Priority)
+                // Don't replace an existing checklist entry if it's already acting as the nominated entry.
+                if (!existingEntry.Nominated)
                 {
-                    logger.LogDebug($"Removing lower priority entry and adding candidate pair to checklist for: {entry.RemoteCandidate}");
-                    _checklist.Remove(existingEntry);
-                    _checklist.Add(entry);
-                }
-                else
-                {
-                    logger.LogDebug($"Existing checklist entry has higher priority, NOT adding entry for: {entry.RemoteCandidate}");
+                    if (entry.Priority > existingEntry.Priority)
+                    {
+                        logger.LogDebug($"Removing lower priority entry and adding candidate pair to checklist for: {entry.RemoteCandidate}");
+                        _checklist.Remove(existingEntry);
+                        _checklist.Add(entry);
+                    }
+                    else
+                    {
+                        logger.LogDebug($"Existing checklist entry has higher priority, NOT adding entry for: {entry.RemoteCandidate}");
+                    }
                 }
             }
             else
@@ -1148,7 +1170,7 @@ namespace SIPSorcery.Net
         /// </remarks>
         private void SendConnectivityCheck(ChecklistEntry candidatePair, bool setUseCandidate)
         {
-            if(candidatePair.FirstCheckSentAt == DateTime.MinValue)
+            if (candidatePair.FirstCheckSentAt == DateTime.MinValue)
             {
                 candidatePair.FirstCheckSentAt = DateTime.Now;
                 candidatePair.State = ChecklistEntryState.InProgress;
