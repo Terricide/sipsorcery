@@ -52,11 +52,15 @@ namespace SIPSorcery.Examples
         public bool CreateJsonOffer { get; set; }
 
         [Option("stun", Required = false,
-            HelpText = "STUN or TURN server to use in the peer connection configuration. Format \"(stun|turn):host[:port][;username;password]\".")]
+            HelpText = "STUN or TURN server to use in the peer connection configuration. Format \"--stun=(stun|turn):host[:port][;username;password]\".")]
         public string StunServer { get; set; }
 
+        [Option("relayonly", Required = false,
+            HelpText = "Only TURN servers will be included in the ICE candidates supplied to the remote peer. Format \"--relayonly\".")]
+        public bool RelayOnly { get; set; }
+
         [Option("nodedss", Required = false,
-            HelpText = "Address of node-dss simple signalling server to exchange SDP and ice candidates. Example http://192.168.11.50:3001.")]
+            HelpText = "Address of node-dss simple signalling server to exchange SDP and ice candidates. Format \"--nodedss=http://192.168.11.50:3001\".")]
         public string NodeDssServer { get; set; }
     }
 
@@ -99,6 +103,7 @@ namespace SIPSorcery.Examples
         private static RTCIceServer _stunServer;
         private static Uri _nodeDssUri;
         private static HttpClient _nodeDssclient;
+        private static bool _relayOnly;
 
         /// <summary>
         /// For simplicity this program only supports one active peer connection.
@@ -109,6 +114,9 @@ namespace SIPSorcery.Examples
         {
             Console.WriteLine("WebRTC Console Test Program");
             Console.WriteLine("Press ctrl-c to exit.");
+
+            //var cert = DtlsUtils.CreateSelfSignedCert();
+            //Console.WriteLine(Convert.ToBase64String(cert.Export(X509ContentType.Pfx)));
 
             bool noOptions = args?.Count() == 0;
 
@@ -140,6 +148,8 @@ namespace SIPSorcery.Examples
                 };
             }
 
+            _relayOnly = options.RelayOnly;
+
             if (options.UseWebSocket || options.UseSecureWebSocket || noOptions)
             {
                 // Start web socket.
@@ -169,7 +179,7 @@ namespace SIPSorcery.Examples
             }
             else if (options.CreateJsonOffer)
             {
-                var pc = Createpc(null, _stunServer);
+                var pc = Createpc(null, _stunServer, _relayOnly);
 
                 var offerSdp = pc.createOffer(null);
                 await pc.setLocalDescription(offerSdp);
@@ -375,7 +385,7 @@ namespace SIPSorcery.Examples
 
                                 if (sdpType == "so")
                                 {
-                                    _peerConnection = Createpc(null, _stunServer);
+                                    _peerConnection = Createpc(null, _stunServer, _relayOnly);
 
                                     var offerSdp = _peerConnection.createOffer(null);
                                     await _peerConnection.setLocalDescription(offerSdp);
@@ -402,7 +412,7 @@ namespace SIPSorcery.Examples
 
                                         Console.WriteLine($"Remote offer:\n{offerInit.sdp}");
 
-                                        _peerConnection = Createpc(null, _stunServer);
+                                        _peerConnection = Createpc(null, _stunServer, _relayOnly);
 
                                         var setRes = _peerConnection.setRemoteDescription(offerInit);
                                         if (setRes != SetDescriptionResultEnum.OK)
@@ -498,7 +508,7 @@ namespace SIPSorcery.Examples
         private static Task<RTCPeerConnection> ReceiveOffer(WebSocketContext context)
         {
             logger.LogDebug($"Web socket client connection from {context.UserEndPoint}, waiting for offer...");
-            var pc = Createpc(context, _stunServer);
+            var pc = Createpc(context, _stunServer, _relayOnly);
             return Task.FromResult(pc);
         }
 
@@ -506,19 +516,19 @@ namespace SIPSorcery.Examples
         {
             logger.LogDebug($"Web socket client connection from {context.UserEndPoint}, sending offer.");
 
-            var pc = Createpc(context, _stunServer);
+            var pc = Createpc(context, _stunServer, _relayOnly);
 
             var offerInit = pc.createOffer(null);
             await pc.setLocalDescription(offerInit);
 
             logger.LogDebug($"Sending SDP offer to client {context.UserEndPoint}.");
 
-            context.WebSocket.Send(offerInit.sdp);
+            context.WebSocket.Send(JsonConvert.SerializeObject(offerInit, new Newtonsoft.Json.Converters.StringEnumConverter()));
 
             return pc;
         }
 
-        private static RTCPeerConnection Createpc(WebSocketContext context, RTCIceServer stunServer)
+        private static RTCPeerConnection Createpc(WebSocketContext context, RTCIceServer stunServer, bool relayOnly)
         {
             if (_peerConnection != null)
             {
@@ -537,7 +547,8 @@ namespace SIPSorcery.Examples
                 certificates = presetCertificates,
                 X_RemoteSignallingAddress = (context != null) ? context.UserEndPoint.Address : null,
                 iceServers = stunServer != null ? new List<RTCIceServer> { stunServer } : null,
-                iceTransportPolicy = RTCIceTransportPolicy.all,
+                //iceTransportPolicy = RTCIceTransportPolicy.all,
+                iceTransportPolicy = relayOnly ? RTCIceTransportPolicy.relay : RTCIceTransportPolicy.all,
                 //X_BindAddress = IPAddress.Any, // NOTE: Not reqd. Using this to filter out IPv6 addresses so can test with Pion.
             };
 
@@ -545,7 +556,7 @@ namespace SIPSorcery.Examples
 
             //_peerConnection.GetRtpChannel().MdnsResolve = (hostname) => Task.FromResult(NetServices.InternetDefaultAddress);
             _peerConnection.GetRtpChannel().MdnsResolve = MdnsResolve;
-            _peerConnection.GetRtpChannel().OnStunMessageReceived += (msg, ep, isrelay) => logger.LogDebug($"STUN message received from {ep}, message class {msg.Header.MessageClass}.");
+            _peerConnection.GetRtpChannel().OnStunMessageReceived += (msg, ep, isrelay) => logger.LogDebug($"STUN message received from {ep}, message type {msg.Header.MessageType}.");
 
             var dc = _peerConnection.createDataChannel(DATA_CHANNEL_LABEL, null);
             dc.onmessage += (msg) => logger.LogDebug($"data channel receive ({dc.label}-{dc.id}): {msg}");
@@ -610,8 +621,13 @@ namespace SIPSorcery.Examples
 
                     // Add local media tracks depending on what was offered. Also add local tracks with the same media ID as 
                     // the remote tracks so that the media announcement in the SDP answer are in the same order.
-                    SDP remoteSdp = SDP.ParseSDPDescription(message);
-                    var res = pc.setRemoteDescription(new RTCSessionDescriptionInit { sdp = message, type = RTCSdpType.offer });
+                    var offerInit = JsonConvert.DeserializeObject<RTCSessionDescriptionInit>(message, new Newtonsoft.Json.Converters.StringEnumConverter());
+
+                    //SDP remoteSdp = SDP.ParseSDPDescription(message);
+                    //var res = pc.setRemoteDescription(new RTCSessionDescriptionInit { sdp = message, type = RTCSdpType.offer });
+
+                    var res = pc.setRemoteDescription(offerInit);
+
                     if (res != SetDescriptionResultEnum.OK)
                     {
                         // No point continuing. Something will need to change and then try again.
@@ -622,13 +638,16 @@ namespace SIPSorcery.Examples
                         var answer = pc.createAnswer(null);
                         await pc.setLocalDescription(answer);
 
-                        context.WebSocket.Send(answer.sdp);
+                        context.WebSocket.Send(JsonConvert.SerializeObject(answer, new Newtonsoft.Json.Converters.StringEnumConverter()));
                     }
                 }
                 else if (pc.remoteDescription == null)
                 {
                     logger.LogDebug("Answer SDP: " + message);
-                    var res = pc.setRemoteDescription(new RTCSessionDescriptionInit { sdp = message, type = RTCSdpType.answer });
+
+                    var answerInit = JsonConvert.DeserializeObject<RTCSessionDescriptionInit>(message, new Newtonsoft.Json.Converters.StringEnumConverter());
+
+                    var res = pc.setRemoteDescription(answerInit);
                     if (res != SetDescriptionResultEnum.OK)
                     {
                         // No point continuing. Something will need to change and then try again.

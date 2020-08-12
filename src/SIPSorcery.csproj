@@ -40,8 +40,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Vcms\VPMPush\Verismic.MiniLibrary\Verismic.MiniLibrary.Netcore.csproj" />
-    <ProjectReference Include="d:\Mark\Downloads\DnsClient.NET-dev\DnsClient.NET-dev\src\DnsClient\DnsClient.csproj" />
+    <ProjectReference Include="..\..\DnsClient.NET\src\DnsClient\DnsClient.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Verismic.MiniLibrary">
+      <HintPath>..\..\Vcms\bin\Client\Debug\Verismic.MiniLibrary.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
   <PropertyGroup>

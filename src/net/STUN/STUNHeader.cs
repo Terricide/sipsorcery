@@ -112,7 +112,7 @@ namespace SIPSorcery.Net
     {
         Request = 0,
         Indication = 1,
-        SuccesResponse = 2,
+        SuccessResponse = 2,
         ErrorResponse = 3,
     }
 
@@ -182,11 +182,6 @@ namespace SIPSorcery.Net
             }
 
             return null;
-        }
-
-        public string GetTransactionId()
-        {
-            return BitConverter.ToString(TransactionId);
         }
     }
 }

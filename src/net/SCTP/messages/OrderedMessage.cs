@@ -1,13 +1,26 @@
-﻿using System;
+﻿//-----------------------------------------------------------------------------
+// Filename: OrderedMessage.cs
+//
+// Description: Represents an ordered message for an SCTP stream.
+//
+// Author(s):
+// @Terricide
+//
+// History:
+// 12 Aug 2020	@Terricide	Created.
+//
+// License: 
+// BSD 3-Clause "New" or "Revised" License, see included LICENSE.md file.
+//-----------------------------------------------------------------------------
+
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Text;
 using Microsoft.Extensions.Logging;
 using SCTP4CS.Utils;
-using SIPSorcery.Net.Sctp;
 using SIPSorcery.Sys;
 
-namespace SIPSorcery.net.SCTP.messages
+namespace SIPSorcery.Net.Sctp
 {
     public class OrderedMessage
     {
@@ -15,6 +28,8 @@ namespace SIPSorcery.net.SCTP.messages
         private ConcurrentDictionary<uint, DataChunk> Chunks = new ConcurrentDictionary<uint, DataChunk>();
         private DataChunk start;
         private DataChunk end;
+        private object myLock = new object();
+        private bool isDone;
         public int Number;
         public OrderedMessage(int num)
         {
@@ -84,6 +99,24 @@ namespace SIPSorcery.net.SCTP.messages
                 list.Add(Chunks[i]);
             }
             return list;
+        }
+
+        public void Finish(Action action)
+        {
+            if (isDone)
+            {
+                return;
+            }
+
+            lock(myLock)
+            {
+                if (isDone)
+                {
+                    return;
+                }
+                isDone = true;
+                action.Invoke();
+            }
         }
     }
 }

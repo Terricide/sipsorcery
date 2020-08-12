@@ -64,6 +64,7 @@ using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -112,8 +113,8 @@ namespace SIPSorcery.Net
         private const int MAX_CHECKLIST_ENTRIES = 25;       // Maximum number of entries that can be added to the checklist of candidate pairs.
         private const string MDNS_TLD = ".local";           // Top Level Domain name for multicast lookups as per RFC6762.
         private const int CONNECTED_CHECK_PERIOD = 3;       // The period in seconds to send STUN connectivity checks once connected.
-        private const int DISCONNECTED_TIMEOUT_PERIOD = 8;  // The period in seconds after which a connection will be flagged as disconnected.
-        private const int FAILED_TIMEOUT_PERIOD = 16;       // The period in seconds after which a connection will be flagged as failed.
+        public const int DISCONNECTED_TIMEOUT_PERIOD = 8;  // The period in seconds after which a connection will be flagged as disconnected.
+        public const int FAILED_TIMEOUT_PERIOD = 16;       // The period in seconds after which a connection will be flagged as failed.
         public const string SDP_MID = "0";
         public const int SDP_MLINE_INDEX = 0;
 
@@ -124,11 +125,6 @@ namespace SIPSorcery.Net
         /// See https://tools.ietf.org/html/rfc8445#section-14.
         /// </remarks>
         private const int Ta = 50;
-
-        /// <summary>
-        /// The number of connectivity checks to carry out.
-        /// </summary>
-        private const int N = 5;
 
         private static readonly ILogger logger = Log.Logger;
 
@@ -228,7 +224,7 @@ namespace SIPSorcery.Net
                 }
                 else
                 {
-                    return Math.Max(500, Ta * N * (_checklist.Count(x => x.State == ChecklistEntryState.Waiting) + _checklist.Count(x => x.State == ChecklistEntryState.InProgress)));
+                    return Math.Max(500, Ta * (_checklist.Count(x => x.State == ChecklistEntryState.Waiting) + _checklist.Count(x => x.State == ChecklistEntryState.InProgress)));
                 }
             }
         }
@@ -246,6 +242,8 @@ namespace SIPSorcery.Net
         public event Action<RTCIceConnectionState> OnIceConnectionStateChange;
         public event Action<RTCIceGatheringState> OnIceGatheringStateChange;
         public event Action<RTCIceCandidate, string> OnIceCandidateError;
+
+        public static List<DnsClient.NameServer> DefaultNameServers { get; set; }
 
         /// <summary>
         /// This event gets fired when a STUN message is received by this channel.
@@ -292,7 +290,14 @@ namespace SIPSorcery.Net
         {
             if (_dnsLookupClient == null)
             {
-                _dnsLookupClient = new DnsClient.LookupClient();
+                if (DefaultNameServers != null)
+                {
+                    _dnsLookupClient = new DnsClient.LookupClient(DefaultNameServers.ToArray());
+                }
+                else
+                {
+                    _dnsLookupClient = new DnsClient.LookupClient();
+                }
             }
 
             _bindAddress = bindAddress;
@@ -317,6 +322,24 @@ namespace SIPSorcery.Net
                 RTCIceCandidateType.host,
                 null,
                 0);
+
+            if (iceServers != null)
+            {
+                InitialiseIceServers(_iceServers);
+
+                // DNS is only needed if there are ICE server hostnames to lookup.
+                if (_dnsLookupClient == null && _iceServerConnections.Any( x => !IPAddress.TryParse(x.Key.Host, out _)))
+                {
+                    if (DefaultNameServers != null)
+                    {
+                        _dnsLookupClient = new DnsClient.LookupClient(DefaultNameServers.ToArray());
+                    }
+                    else
+                    {
+                        _dnsLookupClient = new DnsClient.LookupClient();
+                    }
+                }
+            }
         }
 
         /// <summary>
@@ -344,7 +367,7 @@ namespace SIPSorcery.Net
 
                 logger.LogDebug($"RTP ICE Channel discovered {_candidates.Count} local candidates.");
 
-                if (_iceServers != null)
+                if (_iceServerConnections?.Count > 0)
                 {
                     InitialiseIceServers(_iceServers);
                     _processIceServersTimer = new Timer(CheckIceServers, null, 0, Ta);
@@ -456,9 +479,9 @@ namespace SIPSorcery.Net
             // Reset the session state.
             _connectivityChecksTimer?.Dispose();
             _processIceServersTimer?.Dispose();
-            _candidates.Clear();
-            _checklist.Clear();
-            _iceServerConnections.Clear();
+            _candidates?.Clear();
+            _checklist?.Clear();
+            _iceServerConnections?.Clear();
             IceGatheringState = RTCIceGatheringState.@new;
             IceConnectionState = RTCIceConnectionState.@new;
 
@@ -525,23 +548,19 @@ namespace SIPSorcery.Net
             List<IPAddress> localAddresses = null;
             if (IPAddress.IPv6Any.Equals(rtpBindAddress))
             {
-#if !NET20
-                if (base.RtpSocket.DualMode)
+                if (base.RtpSocket.DualMode())
                 {
                     // IPv6 dual mode listening on [::] means we can use all valid local addresses.
                     localAddresses = NetServices.GetLocalAddressesOnInterface(_bindAddress)
-                        .Where(x => !IPAddress.IsLoopback(x) && !x.IsIPv4MappedToIPv6 && !x.IsIPv6SiteLocal).ToList();
+                        .Where(x => !IPAddress.IsLoopback(x) && !x.IsIPv4MappedToIPv6() && !x.IsIPv6SiteLocal).ToList();
                 }
                 else
                 {
-#endif
                     // IPv6 but not dual mode on [::] means can use all valid local IPv6 addresses.
                     localAddresses = NetServices.GetLocalAddressesOnInterface(_bindAddress)
                         .Where(x => x.AddressFamily == AddressFamily.InterNetworkV6
                         && !IPAddress.IsLoopback(x) && !x.IsIPv4MappedToIPv6() && !x.IsIPv6SiteLocal).ToList();
-#if !NET20
                 }
-#endif
             }
             else if (IPAddress.Any.Equals(rtpBindAddress))
             {
@@ -684,6 +703,11 @@ namespace SIPSorcery.Net
                     {
                         logger.LogDebug("RTP ICE Channel was not able to acquire an active ICE server, stopping ICE servers timer.");
                         _processIceServersTimer.Dispose();
+                    }
+                    else if ((_activeIceServer._uri.Scheme == STUNSchemesEnum.turn && _activeIceServer.RelayEndPoint != null) ||
+                        (_activeIceServer._uri.Scheme == STUNSchemesEnum.stun && _activeIceServer.ServerReflexiveEndPoint != null))
+                    {
+                        // Successfully set up the ICE server. Do nothing.
                     }
                     // If the ICE server hasn't yet been resolved initiate the DNS check.
                     else if (_activeIceServer.ServerEndPoint == null && _activeIceServer.DnsLookupSentAt == DateTime.MinValue)
@@ -964,15 +988,19 @@ namespace SIPSorcery.Net
 
             if (existingEntry != null)
             {
-                if (entry.Priority > existingEntry.Priority)
+                // Don't replace an existing checklist entry if it's already acting as the nominated entry.
+                if (!existingEntry.Nominated)
                 {
-                    logger.LogDebug($"Removing lower priority entry and adding candidate pair to checklist for: {entry.RemoteCandidate}");
-                    _checklist.Remove(existingEntry);
-                    _checklist.Add(entry);
-                }
-                else
-                {
-                    logger.LogDebug($"Existing checklist entry has higher priority, NOT adding entry for: {entry.RemoteCandidate}");
+                    if (entry.Priority > existingEntry.Priority)
+                    {
+                        logger.LogDebug($"Removing lower priority entry and adding candidate pair to checklist for: {entry.RemoteCandidate}");
+                        _checklist.Remove(existingEntry);
+                        _checklist.Add(entry);
+                    }
+                    else
+                    {
+                        logger.LogDebug($"Existing checklist entry has higher priority, NOT adding entry for: {entry.RemoteCandidate}");
+                    }
                 }
             }
             else
@@ -1063,8 +1091,7 @@ namespace SIPSorcery.Net
 
                                 // Do a check for any timed out entries.
                                 var failedEntries = _checklist.Where(x => x.State == ChecklistEntryState.InProgress
-                                       && DateTime.Now.Subtract(x.LastCheckSentAt).TotalMilliseconds > RTO
-                                       && x.ChecksSent >= N).ToList();
+                                       && DateTime.Now.Subtract(x.FirstCheckSentAt).TotalSeconds > FAILED_TIMEOUT_PERIOD).ToList();
 
                                 foreach (var failedEntry in failedEntries)
                                 {
@@ -1143,7 +1170,12 @@ namespace SIPSorcery.Net
         /// </remarks>
         private void SendConnectivityCheck(ChecklistEntry candidatePair, bool setUseCandidate)
         {
-            candidatePair.State = ChecklistEntryState.InProgress;
+            if (candidatePair.FirstCheckSentAt == DateTime.MinValue)
+            {
+                candidatePair.FirstCheckSentAt = DateTime.Now;
+                candidatePair.State = ChecklistEntryState.InProgress;
+            }
+
             candidatePair.LastCheckSentAt = DateTime.Now;
             candidatePair.ChecksSent++;
             candidatePair.RequestTransactionID = Crypto.GetRandomString(STUNHeader.TRANSACTION_ID_LENGTH);
@@ -1310,7 +1342,7 @@ namespace SIPSorcery.Net
                     GotStunBindingRequest(stunMessage, remoteEndPoint, wasRelayed);
                 }
                 else if (stunMessage.Header.MessageClass == STUNClassTypesEnum.ErrorResponse ||
-                         stunMessage.Header.MessageClass == STUNClassTypesEnum.SuccesResponse)
+                         stunMessage.Header.MessageClass == STUNClassTypesEnum.SuccessResponse)
                 {
                     // Correlate with request using transaction ID as per https://tools.ietf.org/html/rfc8445#section-7.2.5.
                     var matchingChecklistEntry = GetChecklistEntryForStunResponse(stunMessage.Header.TransactionId);
