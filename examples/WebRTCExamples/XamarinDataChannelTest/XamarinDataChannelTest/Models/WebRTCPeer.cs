@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Threading.Tasks;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.Extensions.Logging;
 
@@ -45,13 +46,27 @@ namespace XamarinDataChannelTest.Models
 "2w/UUSAAv5wrzCwH8gOPoUxgavo6KSDUutM9zbD+KYxmFzMAyy+bGgswWjUztKSyQbhtzA7MB8wBwYFKw4DAhoEFNSCGFAVyZcG" +
 "WY8tTP+50BmGmvMdBBQLO5m+vo7Hkuz3VJH9LSMna/EYhgICB9A=";
 
-        private static Microsoft.Extensions.Logging.ILogger logger = SIPSorcery.Sys.Log.Logger;
+        private static ILogger logger = SIPSorcery.Sys.Log.Logger;
         public RTCPeerConnection PeerConnection { get; private set; }
         private string _dataChannelLabel;
         public event Action<RTCIceCandidateInit> OnIceCandidateAvailable;
         public string _peerName;
 
         private Dictionary<string, RTCDataChannel> _dataChannels = new Dictionary<string, RTCDataChannel>();
+
+        public event Action<string> OnDataChannelMessage;
+
+        static WebRTCPeer()
+        {
+            // DNS lookups on Xamarin don't seem to work. The reason to add the hard coded
+            // DNS servers is to prevent he exception when the DnsClient attempts to find
+            // /etc/resolv.conf.
+            RtpIceChannel.DefaultNameServers = new List<DnsClient.NameServer> {
+                DnsClient.NameServer.GooglePublicDnsIPv6,
+                DnsClient.NameServer.GooglePublicDns2IPv6,
+                DnsClient.NameServer.GooglePublicDns,
+                DnsClient.NameServer.GooglePublicDns2 };
+        }
 
         public WebRTCPeer(string peerName, string dataChannelLabel)
         {
@@ -70,14 +85,18 @@ namespace XamarinDataChannelTest.Models
 
             RTCConfiguration pcConfiguration = new RTCConfiguration
             {
-                certificates = presetCertificates
+                certificates = presetCertificates,
+                //iceServers = new List<RTCIceServer> { new RTCIceServer { urls = "stun:stun.l.google.com:19302" } }
+                iceServers = new List<RTCIceServer> { new RTCIceServer { urls = "stun:108.177.15.127:19302" } },
+                X_BindAddress = IPAddress.Any
             };
 
             var pc = new RTCPeerConnection(pcConfiguration);
-            pc.GetRtpChannel().OnStunMessageReceived += (msg, ep, isrelay) => logger.LogDebug($"{_peerName}: STUN message received from {ep}, message class {msg.Header.MessageClass}.");
+            //pc.GetRtpChannel().OnStunMessageReceived += (msg, ep, isrelay) => logger.LogDebug($"{_peerName}: STUN message received from {ep}, message class {msg.Header.MessageClass}.");
 
             var dataChannel = pc.createDataChannel(_dataChannelLabel, null);
             dataChannel.onDatamessage += DataChannel_onDatamessage;
+            dataChannel.onmessage += DataChannel_onmessage;
             _dataChannels.Add(_dataChannelLabel, dataChannel);
 
             pc.onicecandidateerror += (candidate, error) => logger.LogWarning($"{_peerName}: Error adding remote ICE candidate. {error} {candidate}");
@@ -110,11 +129,17 @@ namespace XamarinDataChannelTest.Models
             {
                 dc.onopen += () => logger.LogDebug($"{_peerName}: Data channel now open label {dc.label}, stream ID {dc.id}.");
                 dc.onDatamessage += DataChannel_onDatamessage;
+                dc.onmessage += DataChannel_onmessage;
                 logger.LogDebug($"{_peerName}: Data channel created by remote peer, label {dc.label}, stream ID {dc.id}.");
                 _dataChannels.Add(dc.label, dc);
             };
 
             return pc;
+        }
+
+        private void DataChannel_onmessage(string message)
+        {
+            OnDataChannelMessage?.Invoke(message);
         }
 
         private void DataChannel_onDatamessage(byte[] obj)
@@ -134,14 +159,15 @@ namespace XamarinDataChannelTest.Models
             return false;
         }
 
-        public void Send(string label, byte[] data)
+        public async Task Send(string label, string message)
         {
             if (_dataChannels.ContainsKey(label))
             {
                 var dc = _dataChannels[label];
                 if (dc.IsOpened)
                 {
-                    _dataChannels[label].send(data);
+                    logger.LogDebug($"Sending data channel message on channel {label}.");
+                    await _dataChannels[label].sendasync(message);
                 }
                 else
                 {
