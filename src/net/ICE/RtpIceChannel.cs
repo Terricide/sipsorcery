@@ -166,11 +166,11 @@ namespace SIPSorcery.Net
         {
             get
             {
-                return _candidates;
+                return _candidates.ToList();
             }
         }
 
-        private List<RTCIceCandidate> _candidates = new List<RTCIceCandidate>();
+        private ConcurrentBag<RTCIceCandidate> _candidates = new ConcurrentBag<RTCIceCandidate>();
         internal List<RTCIceCandidate> _remoteCandidates = new List<RTCIceCandidate>();
 
         /// <summary>
@@ -359,7 +359,11 @@ namespace SIPSorcery.Net
 
                 if (_policy == RTCIceTransportPolicy.all)
                 {
-                    _candidates = GetHostCandidates();
+                    _candidates = new ConcurrentBag<RTCIceCandidate>();
+                    foreach(var iceCandidate in GetHostCandidates())
+                    {
+                        _candidates.Add(iceCandidate);
+                    }
                 }
 
                 logger.LogDebug($"RTP ICE Channel discovered {_candidates.Count} local candidates.");
@@ -478,7 +482,7 @@ namespace SIPSorcery.Net
             // Reset the session state.
             _connectivityChecksTimer?.Dispose();
             _processIceServersTimer?.Dispose();
-            _candidates?.Clear();
+            _candidates = new ConcurrentBag<RTCIceCandidate>();
             _checklist?.Clear();
             _iceServerConnections?.Clear();
             IceGatheringState = RTCIceGatheringState.@new;
