@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright 2017 pi.pe gmbh .
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,6 +59,11 @@ namespace SIPSorcery.Net.Sctp
                     logger.LogError("SCTPMessage cannot be null, but it is");
                     return;
                 }
+                if (isClosing())
+                {
+                    logger.LogError("Unable to send SCTPStream is closing");
+                    return;
+                }
                 undeliveredOutboundMessages.AddOrUpdate(m.getSeq(), m, (id, b) => m);
                 a.sendAndBlock(m);
             }
@@ -80,6 +85,12 @@ namespace SIPSorcery.Net.Sctp
                     logger.LogError("SCTPMessage cannot be null, but it is");
                     return;
                 }
+                if (isClosing())
+                {
+                    logger.LogError("Unable to send SCTPStream is closing");
+                    return;
+                }
+                undeliveredOutboundMessages.AddOrUpdate(m.getSeq(), m, (id, b) => m);
                 a.sendAndBlock(m);
             }
             finally
