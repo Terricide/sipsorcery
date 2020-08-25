@@ -231,7 +231,7 @@ namespace SIPSorcery.Net.Sctp
             closing = b;
         }
 
-        bool isClosing()
+        protected bool isClosing()
         {
             return closing;
         }
