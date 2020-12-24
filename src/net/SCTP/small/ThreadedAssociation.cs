@@ -75,32 +75,6 @@ namespace SIPSorcery.Net.Sctp
 
 		 Note: This variable is kept on the entire association.
 		 */
-        private object _RwndLock = new object();
-        private long _Rwnd;
-        private long _rwnd
-        {
-            get
-            {
-                lock (_RwndLock)
-                {
-                    return _Rwnd;
-                }
-            }
-            set
-            {
-                lock (_RwndLock)
-                {
-                    if (_Rwnd != value)
-                    {
-                        if (value < 0)
-                        {
-                            value = 0;
-                        }
-                        _Rwnd = value;
-                    }
-                }
-            }
-        }
         private SharedLong _rwnd = new SharedLong(0);
         /*
 		 o  Congestion control window (cwnd, in bytes), which is adjusted by
@@ -109,25 +83,7 @@ namespace SIPSorcery.Net.Sctp
 		 Note: This variable is maintained on a per-destination-address
 		 basis.
 		 */
-        private long _Cwnd;
-        private long _cwnd
-        {
-            get
-            {
-                return _Cwnd;
-            }
-            set
-            {
-                if (_Cwnd != value)
-                {
-                    if (value < 0)
-                    {
-                        value = 0;
-                    }
-                    _Cwnd = value;
-                }
-            }
-        }
+        private SharedLong _cwnd = new SharedLong(0);
 
         // assume a single destination via ICE
         /*
