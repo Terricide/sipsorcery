@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright 2017 pi.pe gmbh .
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,7 @@ using System.IO;
 using System.Threading;
 using Microsoft.Extensions.Logging;
 using Org.BouncyCastle.Crypto.Tls;
+using SIPSorcery.net.SCTP;
 using SIPSorcery.Sys;
 
 /**
@@ -100,6 +101,7 @@ namespace SIPSorcery.Net.Sctp
                 }
             }
         }
+        private SharedLong _rwnd = new SharedLong(0);
         /*
 		 o  Congestion control window (cwnd, in bytes), which is adjusted by
 		 the sender based on observed network conditions.
@@ -501,7 +503,7 @@ namespace SIPSorcery.Net.Sctp
 		 */
         public override Chunk[] inboundInit(InitChunk init)
         {
-            _rwnd = init.getAdRecWinCredit();
+            _rwnd.ExecuteOperation(() => init.getAdRecWinCredit());
             setSsthresh(init);
             return base.inboundInit(init);
         }
@@ -513,11 +515,14 @@ namespace SIPSorcery.Net.Sctp
 
         private void reduceRwnd(int dataSize)
         {
-            _rwnd -= dataSize;
-            if (_rwnd < 0)
+            _rwnd.ExecuteOperation(() =>
             {
-                _rwnd = 0;
-            }
+                var newValue =_rwnd.SubtractNoLock(dataSize);
+                if (newValue < 0)
+                {
+                    _rwnd.SetValueNoLock(0);
+                }
+            });
         }
         /*
 		 C) Any time a DATA chunk is marked for retransmission, either via
@@ -531,7 +536,7 @@ namespace SIPSorcery.Net.Sctp
 
         private void incrRwnd(int dataSize)
         {
-            _rwnd += dataSize;
+            _rwnd.Add(dataSize);
         }
         /*
 
@@ -661,7 +666,7 @@ namespace SIPSorcery.Net.Sctp
                         }
                     }
                 }
-                _rwnd = sack.getArWin() - totalDataInFlight;
+                _rwnd.SetValue(sack.getArWin() - totalDataInFlight);
                 //logger.LogDebug("Setting rwnd to " + _rwnd);
                 bool advanced = (_lastCumuTSNAck < ackedTo);
                 adjustCwind(advanced, totalDataInFlight, totalAcked);
@@ -690,7 +695,7 @@ namespace SIPSorcery.Net.Sctp
 		 */
         protected void resetCwnd()
         {
-            _cwnd = Math.Min(4 * _transpMTU, Math.Max(2 * _transpMTU, 4380));
+            _cwnd.ExecuteOperation(() => Math.Min(4 * _transpMTU, Math.Max(2 * _transpMTU, 4380)));
             lock (_congestion)
             {
                 Monitor.PulseAll(_congestion);
@@ -703,7 +708,7 @@ namespace SIPSorcery.Net.Sctp
 
         protected void setCwndPostRetrans()
         {
-            _cwnd = _transpMTU;
+            _cwnd.ExecuteOperation(() => _transpMTU);
             lock (_congestion)
             {
                 Monitor.PulseAll(_congestion);
@@ -729,12 +734,18 @@ namespace SIPSorcery.Net.Sctp
         bool maySend(int sz)
         {
             // todo somehow take account of stuff sent without and sacks yet.......
-            bool maysend = (sz <= _rwnd);
+            bool maysend = (sz <= _rwnd.GetValue());
             if (!maysend)
             {
-                maysend = _cwnd > 0;
-                //maysend = (sz <= _cwnd);
-                //_cwnd -= sz;
+                maysend = _cwnd.ExecuteOperation((val) =>
+                {
+                    var canSend = (sz <= val);
+                    if (canSend)
+                    {
+                        _cwnd.SubtractNoLock(sz);
+                    }
+                    return canSend;
+                });
             }
             //logger.LogDebug("MaySend " + maysend + " rwnd = " + _rwnd + " cwnd = " + _cwnd + " sz = " + sz);
             return maysend;
@@ -755,79 +766,82 @@ namespace SIPSorcery.Net.Sctp
 		 */
         protected void adjustCwind(bool didAdvance, int inFlightBytes, int totalAcked)
         {
-            bool fullyUtilized = ((inFlightBytes - _cwnd) < DataChunk.GetCapacity()); // could we fit one more in?
-
-            if (_cwnd <= _ssthresh)
+            _cwnd.ExecuteOperation((cWnd) =>
             {
-                // slow start
-                //logger.LogDebug("slow start");
+                bool fullyUtilized = ((inFlightBytes - cWnd) < DataChunk.GetCapacity()); // could we fit one more in?
 
-                if (didAdvance && fullyUtilized)
-                {// && !_fastRecovery) {
-                    int incCwinBy = Math.Min(_transpMTU, totalAcked);
-                    _cwnd += incCwinBy;
-                    //logger.LogDebug("cwnd now " + _cwnd);
-                }
-                //else
-                //{
-                //    logger.LogDebug("cwnd static at " + _cwnd + " (didAdvance fullyUtilized  inFlightBytes totalAcked)  " + didAdvance + " " + fullyUtilized + " " + inFlightBytes + " " + totalAcked);
-                //}
-
-            }
-            else
-            {
-                /*
-                 7.2.2.  Congestion Avoidance
-
-                 When cwnd is greater than ssthresh, cwnd should be incremented by
-                 1*MTU per RTT if the sender has cwnd or more bytes of data
-                 outstanding for the corresponding transport address.
-
-                 In practice, an implementation can achieve this goal in the following
-                 way:
-
-                 o  partial_bytes_acked is initialized to 0.
-
-                 o  Whenever cwnd is greater than ssthresh, upon each SACK arrival
-                 that advances the Cumulative TSN Ack Point, increase
-                 partial_bytes_acked by the total number of bytes of all new chunks
-                 acknowledged in that SACK including chunks acknowledged by the new
-                 Cumulative TSN Ack and by Gap Ack Blocks.
-
-                 o  When partial_bytes_acked is equal to or greater than cwnd and
-                 before the arrival of the SACK the sender had cwnd or more bytes
-                 of data outstanding (i.e., before arrival of the SACK, flightsize
-                 was greater than or equal to cwnd), increase cwnd by MTU, and
-                 reset partial_bytes_acked to (partial_bytes_acked - cwnd).
-
-                 o  Same as in the slow start, when the sender does not transmit DATA
-                 on a given transport address, the cwnd of the transport address
-                 should be adjusted to max(cwnd / 2, 4*MTU) per RTO.
-
-
-
-
-
-                 Stewart                     Standards Track                    [Page 97]
-
-                 RFC 4960          Stream Control Transmission Protocol    September 2007
-
-
-                 o  When all of the data transmitted by the sender has been
-                 acknowledged by the receiver, partial_bytes_acked is initialized
-                 to 0.
-
-                 */
-                if (didAdvance)
+                if (cWnd <= _ssthresh)
                 {
-                    _partial_bytes_acked += totalAcked;
-                    if ((_partial_bytes_acked >= _cwnd) && fullyUtilized)
+                    // slow start
+                    //logger.LogDebug("slow start");
+
+                    if (didAdvance && fullyUtilized)
+                    {// && !_fastRecovery) {
+                        int incCwinBy = Math.Min(_transpMTU, totalAcked);
+                        _cwnd.AddNoLock(incCwinBy);
+                        //logger.LogDebug("cwnd now " + _cwnd);
+                    }
+                    //else
+                    //{
+                    //    logger.LogDebug("cwnd static at " + _cwnd + " (didAdvance fullyUtilized  inFlightBytes totalAcked)  " + didAdvance + " " + fullyUtilized + " " + inFlightBytes + " " + totalAcked);
+                    //}
+
+                }
+                else
+                {
+                    /*
+                     7.2.2.  Congestion Avoidance
+
+                     When cwnd is greater than ssthresh, cwnd should be incremented by
+                     1*MTU per RTT if the sender has cwnd or more bytes of data
+                     outstanding for the corresponding transport address.
+
+                     In practice, an implementation can achieve this goal in the following
+                     way:
+
+                     o  partial_bytes_acked is initialized to 0.
+
+                     o  Whenever cwnd is greater than ssthresh, upon each SACK arrival
+                     that advances the Cumulative TSN Ack Point, increase
+                     partial_bytes_acked by the total number of bytes of all new chunks
+                     acknowledged in that SACK including chunks acknowledged by the new
+                     Cumulative TSN Ack and by Gap Ack Blocks.
+
+                     o  When partial_bytes_acked is equal to or greater than cwnd and
+                     before the arrival of the SACK the sender had cwnd or more bytes
+                     of data outstanding (i.e., before arrival of the SACK, flightsize
+                     was greater than or equal to cwnd), increase cwnd by MTU, and
+                     reset partial_bytes_acked to (partial_bytes_acked - cwnd).
+
+                     o  Same as in the slow start, when the sender does not transmit DATA
+                     on a given transport address, the cwnd of the transport address
+                     should be adjusted to max(cwnd / 2, 4*MTU) per RTO.
+
+
+
+
+
+                     Stewart                     Standards Track                    [Page 97]
+    
+                     RFC 4960          Stream Control Transmission Protocol    September 2007
+
+
+                     o  When all of the data transmitted by the sender has been
+                     acknowledged by the receiver, partial_bytes_acked is initialized
+                     to 0.
+
+                     */
+                    if (didAdvance)
                     {
-                        _cwnd += _transpMTU;
-                        _partial_bytes_acked -= _cwnd;
+                        _partial_bytes_acked += totalAcked;
+                        if ((_partial_bytes_acked >= cWnd) && fullyUtilized)
+                        {
+                            cWnd = _cwnd.AddNoLock(_transpMTU);
+                            _partial_bytes_acked -= cWnd;
+                        }
                     }
                 }
-            }
+            });
             lock (_congestion)
             {
                 Monitor.PulseAll(_congestion);
