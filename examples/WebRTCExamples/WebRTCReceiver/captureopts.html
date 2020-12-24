@@ -5,9 +5,10 @@
     <script type="text/javascript">
 
         const STUN_URL = "stun:stun.sipsorcery.com";
-        const WEBSOCKET_URL = "ws://127.0.0.1:8081/"
+        const WEBSOCKET_URL = "ws://127.0.0.1:8081/";
+        const FRAME_RATE = 30.0;
 
-        var pc, ws, statsInterval;
+        var pc, ws, statsInterval, videoSender;
         var lastBytesSent = 0, lastTimestamp = 0;
 
         async function start() {
@@ -16,11 +17,11 @@
             let videoResFn = function (videoResStr) {
                 switch (videoResStr) {
                     case "default": return true;
-                    case "240p": return { width: 320, height: 240 };
-                    case "480p": return { width: 640, height: 480 };
-                    case "720p": return { width: 1280, height: 720 };
-                    case "1080p": return { width: 1920, height: 1080 };
-                    default: return { width: 640, height: 480 };
+                    case "240p": return { width: 320, height: 240, frameRate: FRAME_RATE};
+                    case "480p": return { width: 640, height: 480, frameRate: FRAME_RATE};
+                    case "720p": return { width: 1280, height: 720, frameRate: FRAME_RATE};
+                    case "1080p": return { width: 1920, height: 1080, frameRate: FRAME_RATE};
+                    default: return { };
                 }
             };
 
@@ -31,6 +32,7 @@
                         videoResFn(document.querySelector('input[name="videoResolution"]:checked').value) : false
             };
 
+            console.log(document.querySelector('input[name="videoResolution"]:checked').value);
             console.log(captureOptions);
 
             // Request access to required audio/video capture devices.
@@ -41,27 +43,13 @@
 
             statsInterval = window.setInterval(getConnectionStats, 1000);
 
-            //pc.ontrack = evt => document.querySelector('#videoCtl').srcObject = evt.streams[0];
             pc.onicecandidate = evt => evt.candidate && ws.send(JSON.stringify(evt.candidate));
 
             // Diagnostics.
             pc.onicegatheringstatechange = () => console.log("onicegatheringstatechange: " + pc.iceGatheringState);
             pc.oniceconnectionstatechange = () => console.log("oniceconnectionstatechange: " + pc.iceConnectionState);
             pc.onsignalingstatechange = () => console.log("onsignalingstatechange: " + pc.signalingState);
-            pc.onconnectionstatechange = () => {
-                console.log("onconnectionstatechange: " + pc.connectionState);
-                if (pc.connectionState === "connected") {
-                    pc.getSenders().forEach(sender => {
-                        if (sender.track.kind === "video") {
-                            console.log(sender);
-                            console.log(sender.getParameters());
-                            const params = sender.getParameters();
-                            console.log(`is active: ${params.encodings[0].active}.`);
-                            console.log(`maxBitrate: ${params.encodings[0].maxBitrate}.`);
-                        }
-                    });
-                }
-            }
+            pc.onconnectionstatechange = () => console.log("onconnectionstatechange: " + pc.connectionState);
 
             // Add local capture streams to peer connection.
             captureStm.getTracks().forEach(track => pc.addTrack(track, captureStm));
@@ -76,10 +64,11 @@
                     console.log(`Remote Offer: ${JSON.parse(evt.data).sdp}`);
                     await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(evt.data)));
                     pc.createAnswer()
-                        .then((answer) => {
-                            pc.setLocalDescription(answer);
-                        })
-                        .then(() => ws.send(JSON.stringify(pc.localDescription)));
+                        .then(answer => pc.setLocalDescription(answer))
+                        .then(() => {
+                            console.log(`Local Answer: ${pc.localDescription.sdp}`);
+                            ws.send(JSON.stringify(pc.localDescription));
+                        });
                 }
             };
         };
@@ -100,23 +89,19 @@
         function getConnectionStats() {
 
             pc.getSenders().forEach(sender => {
-                //console.log(sender);
-
-                //let parameters = sender.getParameters();
-                //console.log(`parameters.transactionId ${parameters.transactionId}.`);
-                //parameters.encodings.forEach(enc => {
-                //    console.log(enc);
-                //    console.log(`maxBitrate=${enc.maxBitrate}.`);
-                //});
 
                 sender.getStats().then(stats => {
                     stats.forEach(report => {
                         if (report.type === "outbound-rtp" && report.kind === "video") {
                             let timestamp = report["timestamp"];
                             let bytesSent = report["bytesSent"];
+
                             let bw = ((bytesSent - lastBytesSent) * 8) / ((timestamp - lastTimestamp) / 1000)
 
                             document.querySelector("#videoBandwidth").innerText = bw.toFixed(0);
+
+                            document.querySelector("#qualityLimitationReason").innerText = report["qualityLimitationReason"];
+                            document.querySelector("#qualityLimitationResolutionChanges").innerText = report["qualityLimitationResolutionChanges"];
 
                             lastBytesSent = bytesSent;
                             lastTimestamp = timestamp;
@@ -138,7 +123,7 @@
     <div>
         <fieldset style="width: 400px">
             <legend>Capture Options:</legend>
-            <input type="checkbox" checked="checked" name="captureAudio" /> Audio <br />
+            <input type="checkbox" name="captureAudio" /> Audio <br />
             <input type="checkbox" checked="checked" name="captureVideo" onchange="document.querySelector('#videoResOptions').disabled=!this.checked" /> Video <br />
             <fieldset style="width: 200px" id="videoResOptions">
                 <legend>Video Resolution:</legend>
@@ -151,7 +136,9 @@
         </fieldset>
     </div>
     <div>
-        Video Bandwidth (bps): <span id="videoBandwidth"></span>
+        Video Bandwidth (bps): <span id="videoBandwidth"></span><br />
+        Quality Limitation Reason: <span id="qualityLimitationReason"></span><br />
+        Quality Limitation Resolution Changes: <span id="qualityLimitationResolutionChanges"></span><br />
     </div>
 </body>
 

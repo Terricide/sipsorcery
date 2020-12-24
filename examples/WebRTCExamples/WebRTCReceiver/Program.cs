@@ -29,7 +29,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Serilog;
 using Serilog.Extensions.Logging;
 using SIPSorcery.Net;
+using SIPSorcery.Sys;
 using SIPSorceryMedia.Abstractions.V1;
+using SIPSorceryMedia.Encoders;
 using WebSocketSharp.Server;
 
 namespace demo
@@ -43,15 +45,22 @@ namespace demo
         [Option("ipv6", Required = false,
             HelpText = "If set the web socket server will listen on IPv6 instead of IPv4.")]
         public bool UseIPv6 { get; set; }
+
+        [Option("noaudio", Required = false,
+           HelpText = "If set the an audio track will not be included in the SDP offer.")]
+        public bool NoAudio { get; set; }
     }
 
     class Program
     {
         private const string STUN_URL = "stun:stun.sipsorcery.com";
         private const int WEBSOCKET_PORT = 8081;
+        private const int VIDEO_INITIAL_WIDTH = 640;
+        private const int VIDEO_INITIAL_HEIGHT = 480;
 
         private static Form _form;
         private static PictureBox _picBox;
+        private static Options _options;
 
         private static Microsoft.Extensions.Logging.ILogger logger = NullLogger.Instance;
 
@@ -62,12 +71,12 @@ namespace demo
             logger = AddConsoleLogger();
 
             var parseResult = Parser.Default.ParseArguments<Options>(args);
-            var options = (parseResult as Parsed<Options>)?.Value;
-            X509Certificate2 wssCertificate = (options.WSSCertificate != null) ? LoadCertificate(options.WSSCertificate) : null;
+            _options = (parseResult as Parsed<Options>)?.Value;
+            X509Certificate2 wssCertificate = (_options.WSSCertificate != null) ? LoadCertificate(_options.WSSCertificate) : null;
 
             // Start web socket.
             Console.WriteLine("Starting web socket server...");
-            var webSocketServer = new WebSocketServer((options.UseIPv6) ? IPAddress.IPv6Any : IPAddress.Any, WEBSOCKET_PORT, wssCertificate != null);
+            var webSocketServer = new WebSocketServer((_options.UseIPv6) ? IPAddress.IPv6Any : IPAddress.Any, WEBSOCKET_PORT, wssCertificate != null);
             if (webSocketServer.IsSecure)
             {
                 webSocketServer.SslConfiguration.ServerCertificate = wssCertificate;
@@ -85,7 +94,7 @@ namespace demo
             _form.BackgroundImageLayout = ImageLayout.Center;
             _picBox = new PictureBox
             {
-                Size = new Size(640, 480),
+                Size = new Size(VIDEO_INITIAL_WIDTH, VIDEO_INITIAL_HEIGHT),
                 Location = new Point(0, 0),
                 Visible = true
             };
@@ -97,8 +106,7 @@ namespace demo
 
         private static Task<RTCPeerConnection> CreatePeerConnection()
         {
-            var videoEP = new SIPSorceryMedia.Windows.WindowsVideoEndPoint();
-            //var videoEP = new SIPSorceryMedia.FFmpeg.FFmpegVideoEndPoint();
+            var videoEP = new SIPSorceryMedia.Windows.WindowsVideoEndPoint(new VpxVideoEncoder());
             videoEP.RestrictFormats(format => format.Codec == VideoCodecsEnum.VP8);
 
             videoEP.OnVideoSinkDecodedSample += (byte[] bmp, uint width, uint height, int stride, VideoPixelFormatsEnum pixelFormat) =>
@@ -107,6 +115,13 @@ namespace demo
                 {
                     unsafe
                     {
+                        if(_picBox.Width != (int)width || _picBox.Height != (int)height)
+                        {
+                           logger.LogDebug($"Adjusting video display from {_picBox.Width}x{_picBox.Height} to {width}x{height}.");
+                            _picBox.Width = (int)width;
+                            _picBox.Height = (int)height;
+                        }
+
                         fixed (byte* s = bmp)
                         {
                             Bitmap bmpImage = new Bitmap((int)width, (int)height, (int)(bmp.Length / height), PixelFormat.Format24bppRgb, (IntPtr)s);
@@ -118,14 +133,18 @@ namespace demo
 
             RTCConfiguration config = new RTCConfiguration
             {
-                iceServers = new List<RTCIceServer> { new RTCIceServer { urls = STUN_URL } }
+                //iceServers = new List<RTCIceServer> { new RTCIceServer { urls = STUN_URL } }
+                 X_UseRtpFeedbackProfile = true
             };
             var pc = new RTCPeerConnection(config);
 
             // Add local receive only tracks. This ensures that the SDP answer includes only the codecs we support.
-            MediaStreamTrack audioTrack = new MediaStreamTrack(SDPMediaTypesEnum.audio, false,
-                new List<SDPAudioVideoMediaFormat> { new SDPAudioVideoMediaFormat(SDPWellKnownMediaFormatsEnum.PCMU) }, MediaStreamStatusEnum.RecvOnly);
-            pc.addTrack(audioTrack);
+            if (!_options.NoAudio)
+            {
+                MediaStreamTrack audioTrack = new MediaStreamTrack(SDPMediaTypesEnum.audio, false,
+                    new List<SDPAudioVideoMediaFormat> { new SDPAudioVideoMediaFormat(SDPWellKnownMediaFormatsEnum.PCMU) }, MediaStreamStatusEnum.RecvOnly);
+                pc.addTrack(audioTrack);
+            }
             MediaStreamTrack videoTrack = new MediaStreamTrack(videoEP.GetVideoSinkFormats(), MediaStreamStatusEnum.RecvOnly);
             //MediaStreamTrack videoTrack = new MediaStreamTrack(new VideoFormat(96, "VP8", 90000, "x-google-max-bitrate=5000000"), MediaStreamStatusEnum.RecvOnly);
             pc.addTrack(videoTrack);
@@ -149,8 +168,9 @@ namespace demo
 
             // Diagnostics.
             //pc.OnReceiveReport += (re, media, rr) => logger.LogDebug($"RTCP Receive for {media} from {re}\n{rr.GetDebugSummary()}");
-            //pc.OnSendReport += (media, sr) => logger.LogDebug($"RTCP Send for {media}\n{sr.GetDebugSummary()}");
-            //pc.GetRtpChannel().OnStunMessageReceived += (msg, ep, isRelay) => logger.LogDebug($"STUN {msg.Header.MessageType} received from {ep}.");
+            pc.OnSendReport += (media, sr) => logger.LogDebug($"RTCP Send for {media}\n{sr.GetDebugSummary()}");
+            //pc.GetRtpChannel().OnStunMessageReceived += (msg, ep, isRelay) => logger.LogDebug($"RECV STUN {msg.Header.MessageType} (txid: {msg.Header.TransactionId.HexStr()}) from {ep}.");
+            //pc.GetRtpChannel().OnStunMessageSent += (msg, ep, isRelay) => logger.LogDebug($"SEND STUN {msg.Header.MessageType} (txid: {msg.Header.TransactionId.HexStr()}) to {ep}.");
             pc.oniceconnectionstatechange += (state) => logger.LogDebug($"ICE connection state change to {state}.");
 
             return Task.FromResult(pc);
