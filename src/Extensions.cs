@@ -29,6 +29,32 @@ namespace SIPSorcery
 #endif
         }
 
+#if NET20
+        public static IPAddress MapToIPv6(this IPAddress addr)
+        {
+            if (addr.AddressFamily == AddressFamily.InterNetworkV6)
+            {
+                return addr;
+            }
+
+            var newAddr = new ushort[8]
+            {
+                0,
+                0,
+                0,
+                0,
+                0,
+                65535,
+                (ushort)(((addr.Address & 0xFF00) >> 8) | ((addr.Address & 0xFF) << 8)),
+                (ushort)(((addr.Address & 4278190080u) >> 24) | ((addr.Address & 0xFF0000) >> 8))
+            };
+            byte[] target = new byte[newAddr.Length * 2];
+            Buffer.BlockCopy(newAddr, 0, target, 0, newAddr.Length * 2);
+
+            return new IPAddress(target, 0u);
+        }
+#endif
+
         public static bool DualMode(this Socket socket)
         {
 #if NET20

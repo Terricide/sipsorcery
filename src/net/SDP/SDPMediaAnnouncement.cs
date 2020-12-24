@@ -225,7 +225,7 @@ namespace SIPSorcery.Net
         {
             string announcement = "m=" + Media + " " + Port + " " + Transport + " " + GetFormatListToString() + m_CRLF;
 
-            announcement += !string.IsNullOrWhiteSpace(MediaDescription) ? "i=" + MediaDescription + m_CRLF : null;
+            announcement += !Extensions.IsNullOrWhiteSpace(MediaDescription) ? "i=" + MediaDescription + m_CRLF : null;
 
             announcement += (Connection == null) ? null : Connection.ToString();
 
