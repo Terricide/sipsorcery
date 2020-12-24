@@ -13,14 +13,15 @@
 //    machine as the one running the program. Click the "start" button and
 //    shortly thereafter audio from the softphone should play in the browser.
 //
-// Note this example program forwards audio in one direction only:
-// softphone -> program -> browser
+// Note this example program forwards audio in both directions:
+// softphone <-> program <-> browser
 //
 // Author(s):
 // Aaron Clauson (aaron@sipsorcery.com)
 // 
 // History:
-// 29 Jan 2019	Aaron Clauson	Created, Dublin, Ireland.
+// 29 Jan 2020	Aaron Clauson	Created, Dublin, Ireland.
+// 22 Oct 2020  Aaron Clauson   Enhanced to send bi-directional audio.
 //
 // License: 
 // BSD 3-Clause "New" or "Revised" License, see included LICENSE.md file.
@@ -28,63 +29,33 @@
 
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Net;
-using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Serilog;
-using SIPSorcery.Media;
+using Serilog.Extensions.Logging;
 using SIPSorcery.Net;
 using SIPSorcery.SIP;
 using SIPSorcery.SIP.App;
-using SIPSorceryMedia;
-using WebSocketSharp;
-using WebSocketSharp.Net.WebSockets;
+using SIPSorceryMedia.Abstractions.V1;
 using WebSocketSharp.Server;
 
 namespace SIPSorcery
 {
-    public class SDPExchange : WebSocketBehavior
-    {
-        public RTCPeerConnection PeerConnection;
-
-        public event Func<WebSocketContext, Task<RTCPeerConnection>> WebSocketOpened;
-        public event Action<RTCPeerConnection, string> SDPAnswerReceived;
-
-        public SDPExchange()
-        { }
-
-        protected override void OnMessage(MessageEventArgs e)
-        {
-            SDPAnswerReceived(PeerConnection, e.Data);
-            this.Close();
-        }
-
-        protected override async void OnOpen()
-        {
-            base.OnOpen();
-            PeerConnection = await WebSocketOpened(this.Context);
-        }
-    }
-
     class Program
     {
         private static int SIP_LISTEN_PORT = 5060;
-        private const string WEBSOCKET_CERTIFICATE_PATH = "certs/localhost.pfx";
         private const int WEBSOCKET_PORT = 8081;
 
-        private static Microsoft.Extensions.Logging.ILogger Log = SIPSorcery.Sys.Log.Logger;
+        private static Microsoft.Extensions.Logging.ILogger Log = NullLogger.Instance;
 
-        private static WebSocketServer _webSocketServer;
         private static RTCPeerConnection _peerConnection;
+        private static RTPSession _rtpSession;
 
-        //private delegate void MediaSampleReadyDelegate(SDPMediaTypesEnum mediaType, uint duration, byte[] sample);
-        //private static event MediaSampleReadyDelegate OnMediaFromSIPSampleReady;
-
-        static void Main(string[] args)
+        static void Main()
         {
             Console.WriteLine("SIPSorcery SIP to WebRTC example.");
             Console.WriteLine("Press ctrl-c to exit.");
@@ -92,34 +63,22 @@ namespace SIPSorcery
             // Plumbing code to facilitate a graceful exit.
             CancellationTokenSource exitCts = new CancellationTokenSource(); // Cancellation token to stop the SIP transport and RTP stream.
 
-            AddConsoleLogger();
+            Log = AddConsoleLogger();
+            //EnableTraceLogs(sipTransport);
 
             // Start web socket.
             Console.WriteLine("Starting web socket server...");
-            _webSocketServer = new WebSocketServer(IPAddress.Any, WEBSOCKET_PORT, true);
-            _webSocketServer.SslConfiguration.ServerCertificate = new X509Certificate2(WEBSOCKET_CERTIFICATE_PATH);
-            _webSocketServer.SslConfiguration.CheckCertificateRevocation = false;
-            //_webSocketServer.Log.Level = WebSocketSharp.LogLevel.Debug;
-            _webSocketServer.AddWebSocketService<SDPExchange>("/", (sdpExchanger) =>
-            {
-                sdpExchanger.WebSocketOpened += SendSDPOffer;
-                sdpExchanger.SDPAnswerReceived += SDPAnswerReceived;
-            });
-            _webSocketServer.Start();
-
-            Console.WriteLine($"Waiting for browser web socket connection to {_webSocketServer.Address}:{_webSocketServer.Port}...");
+            var webSocketServer = new WebSocketServer(IPAddress.Any, WEBSOCKET_PORT);
+            webSocketServer.AddWebSocketService<WebRTCWebSocketPeer>("/", (peer) => peer.CreatePeerConnection = CreatePeerConnection);
+            webSocketServer.Start();
 
             // Set up a default SIP transport.
             var sipTransport = new SIPTransport();
             sipTransport.AddSIPChannel(new SIPUDPChannel(new IPEndPoint(IPAddress.Any, SIP_LISTEN_PORT)));
 
-            //EnableTraceLogs(sipTransport);
-
-            RtpAVSession rtpAVSession = null;
-
             // Create a SIP user agent to receive a call from a remote SIP client.
             // Wire up event handlers for the different stages of the call.
-            var userAgent = new SIPUserAgent(sipTransport, null);
+            var userAgent = new SIPUserAgent(sipTransport, null, true);
 
             // We're only answering SIP calls, not placing them.
             userAgent.OnCallHungup += (dialog) =>
@@ -128,45 +87,28 @@ namespace SIPSorcery
                 exitCts.Cancel();
             };
             userAgent.ServerCallCancelled += (uas) => Log.LogInformation("Incoming call cancelled by caller.");
-
-            sipTransport.SIPTransportRequestReceived += async (localEndPoint, remoteEndPoint, sipRequest) =>
+            userAgent.OnIncomingCall += async (ua, req) =>
             {
-                if (sipRequest.Header.From != null &&
-                    sipRequest.Header.From.FromTag != null &&
-                    sipRequest.Header.To != null &&
-                    sipRequest.Header.To.ToTag != null)
-                {
-                    // This is an in-dialog request that will be handled directly by a user agent instance.
-                }
-                else if (sipRequest.Method == SIPMethodsEnum.INVITE)
-                {
-                    if (userAgent?.IsCallActive == true)
-                    {
-                        Log.LogWarning($"Busy response returned for incoming call request from {remoteEndPoint}: {sipRequest.StatusLine}.");
-                        // If we are already on a call return a busy response.
-                        UASInviteTransaction uasTransaction = new UASInviteTransaction(sipTransport, sipRequest, null);
-                        SIPResponse busyResponse = SIPResponse.GetResponse(sipRequest, SIPResponseStatusCodesEnum.BusyHere, null);
-                        uasTransaction.SendFinalResponse(busyResponse);
-                    }
-                    else
-                    {
-                        Log.LogInformation($"Incoming call request from {remoteEndPoint}: {sipRequest.StatusLine}.");
-                        var incomingCall = userAgent.AcceptCall(sipRequest);
+                Log.LogInformation($"Incoming call request from {req.RemoteSIPEndPoint}: {req.StatusLine}.");
+                var incomingCall = userAgent.AcceptCall(req);
 
-                        rtpAVSession = new RtpAVSession(new AudioOptions { AudioSource = AudioSourcesEnum.CaptureDevice }, null);
-                        await userAgent.Answer(incomingCall, rtpAVSession);
-                        rtpAVSession.OnRtpPacketReceived += (ep, mediaType, rtpPacket) => ForwardMedia(mediaType, rtpPacket);
+                var rtpSession = new RTPSession(false, false, false);
+                rtpSession.AcceptRtpFromAny = true;
+                MediaStreamTrack audioTrack = new MediaStreamTrack(SDPMediaTypesEnum.audio, false, 
+                    new List<SDPAudioVideoMediaFormat> { new SDPAudioVideoMediaFormat(SDPWellKnownMediaFormatsEnum.PCMU) });
+                rtpSession.addTrack(audioTrack);
 
-                        Log.LogInformation($"Answered incoming call from {sipRequest.Header.From.FriendlyDescription()} at {remoteEndPoint}.");
-                    }
-                }
-                else
-                {
-                    Log.LogDebug($"SIP {sipRequest.Method} request received but no processing has been set up for it, rejecting.");
-                    SIPResponse notAllowedResponse = SIPResponse.GetResponse(sipRequest, SIPResponseStatusCodesEnum.MethodNotAllowed, null);
-                    await sipTransport.SendResponseAsync(notAllowedResponse);
-                }
+                await userAgent.Answer(incomingCall, rtpSession);
+                rtpSession.OnRtpPacketReceived += ForwardMediaToPeerConnection;
+
+                Log.LogInformation($"Answered incoming call from {req.Header.From.FriendlyDescription()} at {req.RemoteSIPEndPoint}.");
+
+                _rtpSession = rtpSession;
             };
+
+            Console.WriteLine($"Waiting for browser web socket connection to {webSocketServer.Address}:{webSocketServer.Port}...");
+            var contactURI = new SIPURI(SIPSchemesEnum.sip, sipTransport.GetSIPChannels().First().ListeningSIPEndPoint);
+            Console.WriteLine($"Waiting for incoming SIP call to {contactURI}.");
 
             // Ctrl-c will gracefully exit the call at any point.
             Console.CancelKeyPress += delegate (object sender, ConsoleCancelEventArgs e)
@@ -182,7 +124,7 @@ namespace SIPSorcery
 
             Log.LogInformation("Exiting...");
 
-            rtpAVSession?.Close("app exit");
+            _rtpSession?.Close("app exit");
 
             if (userAgent != null)
             {
@@ -206,124 +148,45 @@ namespace SIPSorcery
             #endregion
         }
 
-        private static void RtpAVSession_OnRtpPacketReceived(SDPMediaTypesEnum arg1, RTPPacket arg2)
+        private static Task<RTCPeerConnection> CreatePeerConnection()
         {
-            throw new NotImplementedException();
+            var pc = new RTCPeerConnection(null);
+
+            MediaStreamTrack track = new MediaStreamTrack(SDPMediaTypesEnum.audio, false, 
+                new List<SDPAudioVideoMediaFormat> { new SDPAudioVideoMediaFormat(SDPWellKnownMediaFormatsEnum.PCMU) });
+            pc.addTrack(track);
+            pc.onconnectionstatechange += (state) => Log.LogDebug($"Peer connection state change to {state}.");
+            pc.OnRtpPacketReceived += ForwardMediaToSIP;
+            _peerConnection = pc;
+
+            return Task.FromResult(pc);
         }
 
-        private static async Task<RTCPeerConnection> SendSDPOffer(WebSocketContext context)
+        /// <summary>
+        /// Forwards media from the WebRTC Peer Connection to the remote SIP user agent.
+        /// </summary>
+        /// <param name="remote">The remote endpoint the RTP packet was received from.</param>
+        /// <param name="mediaType">The type of media.</param>
+        /// <param name="rtpPacket">The RTP packet received on the SIP session.</param>
+        private static void ForwardMediaToSIP(IPEndPoint remote, SDPMediaTypesEnum mediaType, RTPPacket rtpPacket)
         {
-            Log.LogDebug($"Web socket client connection from {context.UserEndPoint}.");
-
-            _peerConnection = new RTCPeerConnection(null);
-            //AddressFamily.InterNetwork,
-            //DTLS_CERTIFICATE_FINGERPRINT,
-            //null,
-            //null);
-
-            _peerConnection.OnReceiveReport += RtpSession_OnReceiveReport;
-            _peerConnection.OnSendReport += RtpSession_OnSendReport;
-
-            Log.LogDebug($"Sending SDP offer to client {context.UserEndPoint}.");
-
-            _peerConnection.onconnectionstatechange += (state) =>
+            if(_rtpSession != null && mediaType == SDPMediaTypesEnum.audio)
             {
-                Log.LogDebug($"WebRTC peer connection state changed to {state}.");
-
-                if (state == RTCPeerConnectionState.closed)
-                {
-                    _peerConnection.OnReceiveReport -= RtpSession_OnReceiveReport;
-                    _peerConnection.OnSendReport -= RtpSession_OnSendReport;
-                }
-            };
-
-            MediaStreamTrack audioTrack = new MediaStreamTrack(SDPMediaTypesEnum.audio, false, new List<SDPMediaFormat> { new SDPMediaFormat(SDPMediaFormatsEnum.PCMU) });
-            _peerConnection.addTrack(audioTrack);
-
-            var offerInit = _peerConnection.createOffer(null);
-            await _peerConnection.setLocalDescription(offerInit);
-
-            context.WebSocket.Send(offerInit.sdp);
-
-            return _peerConnection;
-        }
-
-        private static void SDPAnswerReceived(RTCPeerConnection peerConnection, string sdpAnswer)
-        {
-            try
-            {
-                Log.LogDebug("Answer SDP: " + sdpAnswer);
-
-                peerConnection.setRemoteDescription(new RTCSessionDescriptionInit { type = RTCSdpType.answer, sdp = sdpAnswer });
-
-                // Forward audio samples from the SIP session to the WebRTC session (one way).
-                //OnMediaFromSIPSampleReady += webRtcSession.SendMedia;
-            }
-            catch (Exception excp)
-            {
-                Log.LogError("Exception SDPAnswerReceived. " + excp.Message);
+                _rtpSession.SendAudio((uint)rtpPacket.Payload.Length, rtpPacket.Payload);
             }
         }
 
         /// <summary>
         /// Forwards media from the SIP session to the WebRTC session.
         /// </summary>
+        /// <param name="remote">The remote endpoint the RTP packet was received from.</param>
         /// <param name="mediaType">The type of media.</param>
         /// <param name="rtpPacket">The RTP packet received on the SIP session.</param>
-        private static void ForwardMedia(SDPMediaTypesEnum mediaType, RTPPacket rtpPacket)
+        private static void ForwardMediaToPeerConnection(IPEndPoint remote, SDPMediaTypesEnum mediaType, RTPPacket rtpPacket)
         {
-            if (_peerConnection != null)
+            if (_peerConnection != null && mediaType == SDPMediaTypesEnum.audio)
             {
-                _peerConnection.SendMedia(mediaType, (uint)rtpPacket.Payload.Length, rtpPacket.Payload);
-            }
-        }
-
-        /// <summary>
-        /// Wires up the dotnet logging infrastructure to STDOUT.
-        /// </summary>
-        private static void AddConsoleLogger()
-        {
-            // Logging configuration. Can be omitted if internal SIPSorcery debug and warning messages are not required.
-            var loggerFactory = new Microsoft.Extensions.Logging.LoggerFactory();
-            var loggerConfig = new LoggerConfiguration()
-                .Enrich.FromLogContext()
-                .MinimumLevel.Is(Serilog.Events.LogEventLevel.Debug)
-                .WriteTo.Console()
-                .CreateLogger();
-            loggerFactory.AddSerilog(loggerConfig);
-            SIPSorcery.Sys.Log.LoggerFactory = loggerFactory;
-        }
-
-        /// <summary>
-        /// Diagnostic handler to print out our RTCP sender/receiver reports.
-        /// </summary>
-        private static void RtpSession_OnSendReport(SDPMediaTypesEnum mediaType, RTCPCompoundPacket sentRtcpReport)
-        {
-            if (sentRtcpReport.SenderReport != null)
-            {
-                var sr = sentRtcpReport.SenderReport;
-                Console.WriteLine($"RTCP sent SR {mediaType}, ssrc {sr.SSRC}, pkts {sr.PacketCount}, bytes {sr.OctetCount}.");
-            }
-            else
-            {
-                var rrSample = sentRtcpReport.ReceiverReport.ReceptionReports.First();
-                Console.WriteLine($"RTCP sent RR {mediaType}, ssrc {rrSample.SSRC}, seqnum {rrSample.ExtendedHighestSequenceNumber}.");
-            }
-        }
-
-        /// <summary>
-        /// Diagnostic handler to print out our RTCP reports from the remote WebRTC peer.
-        /// </summary>
-        private static void RtpSession_OnReceiveReport(IPEndPoint remoteEndPoint, SDPMediaTypesEnum mediaType, RTCPCompoundPacket recvRtcpReport)
-        {
-            var rr = recvRtcpReport.ReceiverReport.ReceptionReports.FirstOrDefault();
-            if (rr != null)
-            {
-                Console.WriteLine($"RTCP {mediaType} Receiver Report: SSRC {rr.SSRC}, pkts lost {rr.PacketsLost}, delay since SR {rr.DelaySinceLastSenderReport}.");
-            }
-            else
-            {
-                Console.WriteLine($"RTCP {mediaType} Receiver Report: empty.");
+                _peerConnection.SendAudio((uint)rtpPacket.Payload.Length, rtpPacket.Payload);
             }
         }
 
@@ -365,6 +228,21 @@ namespace SIPSorcery
             {
                 Log.LogDebug($"Response retransmit {count} for response {resp.ShortDescription}, initial transmit {DateTime.Now.Subtract(tx.InitialTransmit).TotalSeconds.ToString("0.###")}s ago.");
             };
+        }
+
+        /// <summary>
+        ///  Adds a console logger. Can be omitted if internal SIPSorcery debug and warning messages are not required.
+        /// </summary>
+        private static Microsoft.Extensions.Logging.ILogger AddConsoleLogger()
+        {
+            var serilogLogger = new LoggerConfiguration()
+                .Enrich.FromLogContext()
+                .MinimumLevel.Is(Serilog.Events.LogEventLevel.Debug)
+                .WriteTo.Console()
+                .CreateLogger();
+            var factory = new SerilogLoggerFactory(serilogLogger);
+            SIPSorcery.LogFactory.Set(factory);
+            return factory.CreateLogger<Program>();
         }
     }
 }

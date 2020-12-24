@@ -131,7 +131,7 @@ namespace SIPSorcery.Net.Sctp
         public uint _nearTSN;
         private int _srcPort;
         private int _destPort;
-        private ConcurrentDictionary<int, SCTPStream> _streams;
+        private Dictionary<int, SCTPStream> _streams;
         private AssociationListener _al;
         private Dictionary<long, DataChunk> _outbound;
         protected State _state;
@@ -165,7 +165,7 @@ namespace SIPSorcery.Net.Sctp
             _random = new SecureRandom();
             _myVerTag = _random.NextInt();
             _transp = transport;
-            _streams = new ConcurrentDictionary<int, SCTPStream>();
+            _streams = new Dictionary<int, SCTPStream>();
             _outbound = new Dictionary<long, DataChunk>();
             _holdingPen = new Dictionary<uint, DataChunk>();
             var IInt = new FastBit.Int(_random.NextInt());
@@ -278,47 +278,37 @@ namespace SIPSorcery.Net.Sctp
             }
         }
 
-        private BlockingCollection<ByteBuffer> queue = new BlockingCollection<ByteBuffer>();
-        private ConcurrentQueue<byte[]> bufferQueue = new ConcurrentQueue<byte[]>();
-
-        private void ProcessQueue(CancellationToken token)
-        {
-            while (!token.IsCancellationRequested)
-            {
-                while (queue.TryTake(out var pbb, 1000))
-                {
-                    Packet rec = new Packet(pbb);
-                    deal(rec);
-                    bufferQueue.Enqueue(pbb.Data);
-                }
-            }
-        }
-
         void startRcv()
         {
             Association me = this;
-            var cts = new CancellationTokenSource();
             _rcv = new Thread(() =>
             {
                 try
                 {
+                    byte[] buf = new byte[_transp.GetReceiveLimit()];
                     while (_rcv != null)
                     {
                         try
                         {
-                            if (!bufferQueue.TryDequeue(out var buf))
+                            var length = _transp.Receive(buf, 0, buf.Length, TICK);
+                            if (length > 0)
                             {
-                                buf = new byte[_transp.GetReceiveLimit()];
+                                //var b = Packet.getHex(buf, 0, length);
+                                //logger.LogInformation($"DTLS message recieved\n{b}");   
+                                ByteBuffer pbb = new ByteBuffer(buf);
+                                pbb.Limit = length;
+                                Packet rec = new Packet(pbb);
+                                deal(rec);
                             }
-                            int length = _transp.Receive(buf, 0, buf.Length, TICK);
-                            if (length == DtlsSrtpTransport.DTLS_RECEIVE_ERROR_CODE)
+                            else if (length == DtlsSrtpTransport.DTLS_RECEIVE_ERROR_CODE)
                             {
                                 // The DTLS transport has been closed or i no longer available.
                                 break;
                             }
-                            ByteBuffer pbb = new ByteBuffer(buf);
-                            pbb.Limit = length;
-                            queue.Add(pbb);
+                            else
+                            {
+                                logger.LogInformation("Timeout -> short packet " + length);
+                            }
                         }
                         catch (SocketException e)
                         {
@@ -329,7 +319,7 @@ namespace SIPSorcery.Net.Sctp
                                     logger.LogDebug("tick time out");
                                     break;
                                 default:
-                                    throw e;
+                                    throw;
                             }
                         }
                     }
@@ -346,16 +336,10 @@ namespace SIPSorcery.Net.Sctp
                 {
                     logger.LogDebug("Association receive failed " + ex.GetType().Name + " " + ex.ToString());
                 }
-                finally
-                {
-                    cts.Cancel();
-                }
             });
-            _rcv.Priority = ThreadPriority.AboveNormal;
+            _rcv.Priority = ThreadPriority.Highest;
             _rcv.Name = "AssocRcv" + __assocNo;
             _rcv.Start();
-
-            Task.Run(() => ProcessQueue(cts.Token));
         }
 
         /**
@@ -370,14 +354,13 @@ namespace SIPSorcery.Net.Sctp
             return true;
         }
 
-        private object myLock = new object();
         protected void send(Chunk[] c)
         {
             if ((c != null) && (c.Length > 0))
             {
                 ByteBuffer obb = mkPkt(c);
                 //logger.LogDebug($"SCTP packet send: {Packet.getHex(obb)}");
-                lock (myLock)
+                lock (this)
                 {
                     _transp.Send(obb.Data, obb.offset, obb.Limit);
                 }
@@ -589,7 +572,7 @@ namespace SIPSorcery.Net.Sctp
         private uint howStaleIsMyCookie(CookieHolder cookie)
         {
             uint ret = 0;
-            long now = Time.CurrentTimeMillis();
+            long now = TimeExtension.CurrentTimeMillis();
 
             if ((now - cookie.cookieTime) < VALIDCOOKIELIFE)
             {
@@ -708,7 +691,7 @@ namespace SIPSorcery.Net.Sctp
             iac.setInitiateTag(_myVerTag);
             CookieHolder cookie = new CookieHolder();
             cookie.cookieData = new byte[Association.COOKIESIZE];
-            cookie.cookieTime = Time.CurrentTimeMillis();
+            cookie.cookieTime = TimeExtension.CurrentTimeMillis();
             _random.NextBytes(cookie.cookieData);
             iac.setCookie(cookie.cookieData);
             _cookies.Add(cookie);
@@ -735,7 +718,7 @@ namespace SIPSorcery.Net.Sctp
             if (!_streams.TryGetValue(sno, out _in))
             {
                 _in = mkStream(sno);
-                _streams.AddOrUpdate(sno, _in, (a,b) => _in);
+                _streams.Add(sno, _in);
                 _al.onRawStream(_in);
             }
             Chunk[] repa;
@@ -799,15 +782,14 @@ namespace SIPSorcery.Net.Sctp
                 bool gap = false;
                 for (uint t = _farTSN + 1; !gap; t++)
                 {
-                    if (_holdingPen.TryGetValue(t, out var dc1))
+                    if (_holdingPen.TryGetValue(t, out dc))
                     {
                         _holdingPen.Remove(t);
-                        ingest(dc1, rep);
+                        ingest(dc, rep);
                     }
                     else
                     {
                         //logger.LogDebug("gap in inbound tsns at " + t);
-                        ingest(dc, rep);
                         gap = true;
                     }
                 }
@@ -1001,8 +983,8 @@ namespace SIPSorcery.Net.Sctp
             {
                 //logger.LogDebug("due to reconfig stream " + st);
                 cs[0] = reconfigState.makeClose(st);
+                this.send(cs);
             }
-            this.send(cs);
         }
 
         public SCTPStream mkStream(string label)
@@ -1043,7 +1025,12 @@ namespace SIPSorcery.Net.Sctp
 
         public SCTPStream delStream(int s)
         {
-            _streams.TryRemove(s, out var st);
+            if (!_streams.ContainsKey(s))
+            {
+                return null;
+            }
+            var st = _streams[s];
+            _streams.Remove(s);
             return st;
         }
 
@@ -1061,7 +1048,7 @@ namespace SIPSorcery.Net.Sctp
                     }
                     sout = mkStream(sno);
                     sout.setLabel(label);
-                    _streams.AddOrUpdate(sno, sout, (a,b) => sout);
+                    _streams.Add(sno, sout);
                 }// todo - move this to behave
                 DataChunk DataChannelOpen = DataChunk.mkDataChannelOpen(label);
                 sout.outbound(DataChannelOpen);
@@ -1087,7 +1074,7 @@ namespace SIPSorcery.Net.Sctp
 
         public int maxMessageSize()
         {
-            return 1 << 16; // shrug - I don't know 
+            return 1 << 20; // shrug - I don't know 
         }
 
         public bool canSend()

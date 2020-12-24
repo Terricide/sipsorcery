@@ -183,7 +183,7 @@ namespace SIPSorcery.Net.UnitTests
 
         /// <summary>
         /// Tests that the message integrity attribute is being correctly generated. The original STUN request packet
-        /// was capture on the wire from the Google Chrom WebRTC stack.
+        /// was capture on the wire from the Google Chrome WebRTC stack.
         /// </summary>
         [Fact]
         public void TestMessageIntegrityAttributeForBindingRequest()
@@ -313,9 +313,9 @@ namespace SIPSorcery.Net.UnitTests
             Assert.Equal(STUNClassTypesEnum.Request, (new STUNHeader(STUNMessageTypesEnum.CreatePermission).MessageClass));
             Assert.Equal(STUNClassTypesEnum.Request, (new STUNHeader(STUNMessageTypesEnum.ChannelBind).MessageClass));
 
-            Assert.Equal(STUNClassTypesEnum.SuccesResponse, (new STUNHeader(STUNMessageTypesEnum.BindingSuccessResponse).MessageClass));
-            Assert.Equal(STUNClassTypesEnum.SuccesResponse, (new STUNHeader(STUNMessageTypesEnum.AllocateSuccessResponse).MessageClass));
-            Assert.Equal(STUNClassTypesEnum.SuccesResponse, (new STUNHeader(STUNMessageTypesEnum.CreatePermissionSuccessResponse).MessageClass));
+            Assert.Equal(STUNClassTypesEnum.SuccessResponse, (new STUNHeader(STUNMessageTypesEnum.BindingSuccessResponse).MessageClass));
+            Assert.Equal(STUNClassTypesEnum.SuccessResponse, (new STUNHeader(STUNMessageTypesEnum.AllocateSuccessResponse).MessageClass));
+            Assert.Equal(STUNClassTypesEnum.SuccessResponse, (new STUNHeader(STUNMessageTypesEnum.CreatePermissionSuccessResponse).MessageClass));
 
             Assert.Equal(STUNClassTypesEnum.ErrorResponse, (new STUNHeader(STUNMessageTypesEnum.BindingErrorResponse).MessageClass));
             Assert.Equal(STUNClassTypesEnum.ErrorResponse, (new STUNHeader(STUNMessageTypesEnum.AllocateErrorResponse).MessageClass));
@@ -371,6 +371,23 @@ namespace SIPSorcery.Net.UnitTests
 
             Assert.True(stunRequest.isFingerprintValid);
             Assert.True(stunRequest.CheckIntegrity(System.Text.Encoding.UTF8.GetBytes(icePassword)));
+        }
+
+        /// <summary>
+        /// Checks that the length of the PRIORITY attribute is correct after round tripping.
+        /// </summary>
+        [Fact]
+        public void CheckPriorityAttributeLengthUnitTest()
+        {
+            STUNMessage stunRequest = new STUNMessage(STUNMessageTypesEnum.BindingRequest);
+            stunRequest.AddUsernameAttribute("dummy:dummy");
+            stunRequest.Attributes.Add(new STUNAttribute(STUNAttributeTypesEnum.Priority, BitConverter.GetBytes(1234U)));
+            stunRequest.Attributes.Add(new STUNAttribute(STUNAttributeTypesEnum.UseCandidate, null));
+            byte[] stunReqBytes = stunRequest.ToByteBufferStringKey("dummy", true);
+
+            var stunReq = STUNMessage.ParseSTUNMessage(stunReqBytes, stunReqBytes.Length);
+
+            Assert.Equal(4, stunReq.Attributes.Single(x => x.AttributeType == STUNAttributeTypesEnum.Priority).Value.Length);
         }
     }
 }

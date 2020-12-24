@@ -9,6 +9,7 @@
 // History:
 // ??	        Aaron Clauson	Created, Hobart, Australia
 // 30 Oct 2019  Aaron Clauson   Added support for reliable provisional responses as per RFC3262.
+// 06 Dec 2020  Aaron Clauson   Added DisableRetransmitSending property.
 //
 // License: 
 // BSD 3-Clause "New" or "Revised" License, see included LICENSE.md file.
@@ -54,6 +55,12 @@ namespace SIPSorcery.SIP
         {
             get { return m_pendingTransactions.Count; }
         }
+
+        /// <summary>
+        /// Disables sending of retransmitted requests and responses.
+        /// <seealso cref="SIPTransport.DisableRetransmitSending"/>
+        /// </summary>
+        public bool DisableRetransmitSending { get; set; }
 
         public event SIPTransactionRequestRetransmitDelegate SIPRequestRetransmitTraceEvent;
         public event SIPTransactionResponseRetransmitDelegate SIPResponseRetransmitTraceEvent;
@@ -125,7 +132,6 @@ namespace SIPSorcery.SIP
 
             SIPMethodsEnum transactionMethod = (sipRequest.Method != SIPMethodsEnum.ACK) ? sipRequest.Method : SIPMethodsEnum.INVITE;
             string transactionId = SIPTransaction.GetRequestTransactionId(sipRequest.Header.Vias.TopViaHeader.Branch, transactionMethod);
-            //string contactAddress = (sipRequest.Header.Contact != null && sipRequest.Header.Contact.Count > 0) ? sipRequest.Header.Contact[0].ToString() : "no contact";
 
             lock (m_pendingTransactions)
             {
@@ -140,9 +146,8 @@ namespace SIPSorcery.SIP
                     {
                         //logger.LogDebug("Looking for ACK transaction, branchid=" + sipRequest.Header.Via.TopViaHeader.Branch + ".");
 
-                        foreach (var response in m_pendingTransactions)
+                        foreach (var (_, transaction) in m_pendingTransactions)
                         {
-                            var transaction = response.Value;
                             // According to the standard an ACK should only not get matched by the branchid on the original INVITE for a non-2xx response. However
                             // my Cisco phone created a new branchid on ACKs to 487 responses and since the Cisco also used the same Call-ID and From tag on the initial
                             // unauthenticated request and the subsequent authenticated request the condition below was found to be the best way to match the ACK.
@@ -185,10 +190,9 @@ namespace SIPSorcery.SIP
                     }
                     else if (sipRequest.Method == SIPMethodsEnum.PRACK)
                     {
-                        foreach (var response in m_pendingTransactions)
+                        foreach (var (_, transaction) in m_pendingTransactions)
                         {
-                            var transaction = response.Value;
-                            if (transaction.TransactionType == SIPTransactionTypesEnum.InviteServer)
+                            if (transaction.TransactionType == SIPTransactionTypesEnum.InviteServer && transaction.ReliableProvisionalResponse != null)
                             {
                                 if (transaction.TransactionRequest.Header.CallId == sipRequest.Header.CallId &&
                                     transaction.ReliableProvisionalResponse.Header.From.FromTag == sipRequest.Header.From.FromTag &&
@@ -235,9 +239,8 @@ namespace SIPSorcery.SIP
             logger.LogDebug("=== Pending Transactions ===");
 
             var now = DateTime.Now;
-            foreach (var response in m_pendingTransactions)
+            foreach (var (_, transaction) in m_pendingTransactions)
             {
-                var transaction = response.Value;
                 logger.LogDebug("Pending transaction " + transaction.TransactionRequest.Method + " " + transaction.TransactionState + " " + now.Subtract(transaction.Created).TotalSeconds.ToString("0.##") + "s " + transaction.TransactionRequestURI.ToString() + " (" + transaction.TransactionId + ").");
             }
         }
@@ -275,9 +278,8 @@ namespace SIPSorcery.SIP
 
             lock (m_pendingTransactions)
             {
-                foreach (var response in m_pendingTransactions)
+                foreach (var (_, transaction) in m_pendingTransactions)
                 {
-                    var transaction = response.Value;
                     if ((transaction.TransactionType == SIPTransactionTypesEnum.InviteClient || transaction.TransactionType == SIPTransactionTypesEnum.InviteServer) &&
                         transaction.TransactionFinalResponse != null &&
                         transaction.TransactionState == SIPTransactionStatesEnum.Completed &&
@@ -316,9 +318,8 @@ namespace SIPSorcery.SIP
                     }
                     else
                     {
-                        foreach (var response in m_pendingTransactions.Where(x => x.Value.DeliveryPending))
+                        foreach (var (_, transaction) in m_pendingTransactions.Where(x => x.Value.DeliveryPending))
                         {
-                            var transaction = response.Value;
                             try
                             {
                                 if (transaction.TransactionState == SIPTransactionStatesEnum.Terminated ||
@@ -507,13 +508,20 @@ namespace SIPSorcery.SIP
             }
 
             // Provisional response reliable for INVITE-UAS.
-            if (transaction.Retransmits > 1)
+            if (transaction.Retransmits > 1 && !DisableRetransmitSending)
             {
                 transaction.OnRetransmitProvisionalResponse();
                 SIPResponseRetransmitTraceEvent?.Invoke(transaction, transaction.ReliableProvisionalResponse, transaction.Retransmits);
             }
 
-            return m_sipTransport.SendResponseAsync(transaction.ReliableProvisionalResponse);
+            if (transaction.Retransmits > 1 && DisableRetransmitSending)
+            {
+                return Task.FromResult(SocketError.Success);
+            }
+            else
+            {
+                return m_sipTransport.SendResponseAsync(transaction.ReliableProvisionalResponse);
+            }
         }
 
         /// <summary>
@@ -531,12 +539,20 @@ namespace SIPSorcery.SIP
                 transaction.InitialTransmit = transaction.LastTransmit;
             }
 
-            if (transaction.Retransmits > 1)
+            if (transaction.Retransmits > 1 && !DisableRetransmitSending)
             {
                 transaction.OnRetransmitFinalResponse();
                 SIPResponseRetransmitTraceEvent?.Invoke(transaction, transaction.TransactionFinalResponse, transaction.Retransmits);
             }
-            return m_sipTransport.SendResponseAsync(transaction.TransactionFinalResponse);
+
+            if (transaction.Retransmits > 1 && DisableRetransmitSending)
+            {
+                return Task.FromResult(SocketError.Success);
+            }
+            else
+            {
+                return m_sipTransport.SendResponseAsync(transaction.TransactionFinalResponse);
+            }
         }
 
         /// <summary>
@@ -557,25 +573,32 @@ namespace SIPSorcery.SIP
             }
 
             // INVITE-UAC and no-INVITE transaction types, send request reliably.
-            if (transaction.Retransmits > 1)
+            if (transaction.Retransmits > 1 && !DisableRetransmitSending)
             {
                 SIPRequestRetransmitTraceEvent?.Invoke(transaction, transaction.TransactionRequest, transaction.Retransmits);
                 transaction.RequestRetransmit();
             }
 
-            // If there is no tx request then it must be a PRack request we're being asked to send reliably.
-            SIPRequest req = transaction.TransactionRequest ?? transaction.PRackRequest;
-
-            if (transaction.OutboundProxy != null)
+            if (transaction.Retransmits > 1 && DisableRetransmitSending)
             {
-                result = m_sipTransport.SendRequestAsync(transaction.OutboundProxy, req);
+                return Task.FromResult(SocketError.Success);
             }
             else
             {
-                result = m_sipTransport.SendRequestAsync(req);
-            }
+                // If there is no tx request then it must be a PRack request we're being asked to send reliably.
+                SIPRequest req = transaction.TransactionRequest ?? transaction.PRackRequest;
 
-            return result;
+                if (transaction.OutboundProxy != null)
+                {
+                    result = m_sipTransport.SendRequestAsync(transaction.OutboundProxy, req);
+                }
+                else
+                {
+                    result = m_sipTransport.SendRequestAsync(req);
+                }
+
+                return result;
+            }
         }
 
         private void RemoveExpiredTransactions()
@@ -585,9 +608,8 @@ namespace SIPSorcery.SIP
                 List<string> expiredTransactionIds = new List<string>();
                 var now = DateTime.Now;
 
-                foreach (var response in m_pendingTransactions)
+                foreach (var (_, transaction) in m_pendingTransactions)
                 {
-                    var transaction = response.Value;
                     if (transaction.TransactionType == SIPTransactionTypesEnum.InviteClient || transaction.TransactionType == SIPTransactionTypesEnum.InviteServer)
                     {
                         if (transaction.TransactionState == SIPTransactionStatesEnum.Confirmed)

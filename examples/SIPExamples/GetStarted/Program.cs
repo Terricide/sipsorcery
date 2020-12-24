@@ -17,10 +17,15 @@
 //-----------------------------------------------------------------------------
 
 using System;
+using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using Serilog;
+using Serilog.Extensions.Logging;
+using SIPSorcery.Media;
 using SIPSorcery.SIP;
 using SIPSorcery.SIP.App;
+using SIPSorceryMedia.Windows;
 
 namespace demo
 {
@@ -33,46 +38,68 @@ namespace demo
             Console.WriteLine("SIPSorcery Getting Started Demo");
 
             AddConsoleLogger();
+            CancellationTokenSource exitCts = new CancellationTokenSource();
 
             var sipTransport = new SIPTransport();
 
             EnableTraceLogs(sipTransport);
 
             var userAgent = new SIPUserAgent(sipTransport, null);
-            var rtpSession = new WindowsAudioRtpSession();
+            userAgent.ClientCallFailed += (uac, error, sipResponse) => Console.WriteLine($"Call failed {error}.");
+            userAgent.OnCallHungup += (dialog) => exitCts.Cancel();
+
+            var windowsAudio = new WindowsAudioEndPoint(new AudioEncoder());
+            var voipMediaSession = new VoIPMediaSession(windowsAudio.ToMediaEndPoints());
+            voipMediaSession.AcceptRtpFromAny = true;
 
             // Place the call and wait for the result.
-            bool callResult = await userAgent.Call(DESTINATION, null, null, rtpSession);
-            Console.WriteLine($"Call result {((callResult) ? "success" : "failure")}.");
+            var callTask = userAgent.Call(DESTINATION, null, null, voipMediaSession);
 
-            Console.WriteLine("press any key to exit...");
-            Console.Read();
-
-            if (userAgent.IsCallActive)
+            Console.CancelKeyPress += delegate (object sender, ConsoleCancelEventArgs e)
             {
-                Console.WriteLine("Hanging up.");
-                userAgent.Hangup();
+                e.Cancel = true;
 
-                Task.Delay(1000).Wait();
+                if (userAgent != null)
+                {
+                    if (userAgent.IsCalling || userAgent.IsRinging)
+                    {
+                        Console.WriteLine("Cancelling in progress call.");
+                        userAgent.Cancel();
+                    }
+                    else if (userAgent.IsCallActive)
+                    {
+                        Console.WriteLine("Hanging up established call.");
+                        userAgent.Hangup();
+                    }
+                };
+
+                exitCts.Cancel();
+            };
+
+            Console.WriteLine("press ctrl-c to exit...");
+
+            bool callResult = await callTask;
+
+            if (callResult)
+            {
+                Console.WriteLine($"Call to {DESTINATION} succeeded.");
+                exitCts.Token.WaitHandle.WaitOne();
+            }
+            else
+            {
+                Console.WriteLine($"Call to {DESTINATION} failed.");
+            }
+
+            Console.WriteLine("Exiting...");
+
+            if(userAgent?.IsHangingUp == true)
+            {
+                Console.WriteLine("Waiting 1s for the call hangup or cancel to complete...");
+                await Task.Delay(1000);
             }
 
             // Clean up.
             sipTransport.Shutdown();
-        }
-
-        /// <summary>
-        /// Adds a console logger. Can be omitted if internal SIPSorcery debug and warning messages are not required.
-        /// </summary>
-        private static void AddConsoleLogger()
-        {
-            var loggerFactory = new Microsoft.Extensions.Logging.LoggerFactory();
-            var loggerConfig = new LoggerConfiguration()
-                .Enrich.FromLogContext()
-                .MinimumLevel.Is(Serilog.Events.LogEventLevel.Debug)
-                .WriteTo.Console()
-                .CreateLogger();
-            loggerFactory.AddSerilog(loggerConfig);
-            SIPSorcery.Sys.Log.LoggerFactory = loggerFactory;
         }
 
         /// <summary>
@@ -113,6 +140,21 @@ namespace demo
             {
                 Console.WriteLine($"Response retransmit {count} for response {resp.ShortDescription}, initial transmit {DateTime.Now.Subtract(tx.InitialTransmit).TotalSeconds.ToString("0.###")}s ago.");
             };
+        }
+
+        /// <summary>
+        ///  Adds a console logger. Can be omitted if internal SIPSorcery debug and warning messages are not required.
+        /// </summary>
+        private static Microsoft.Extensions.Logging.ILogger AddConsoleLogger()
+        {
+            var serilogLogger = new LoggerConfiguration()
+                .Enrich.FromLogContext()
+                .MinimumLevel.Is(Serilog.Events.LogEventLevel.Debug)
+                .WriteTo.Console()
+                .CreateLogger();
+            var factory = new SerilogLoggerFactory(serilogLogger);
+            SIPSorcery.LogFactory.Set(factory);
+            return factory.CreateLogger<Program>();
         }
     }
 }

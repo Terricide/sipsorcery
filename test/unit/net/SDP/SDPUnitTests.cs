@@ -13,6 +13,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using Microsoft.Extensions.Logging;
+using SIPSorceryMedia.Abstractions.V1;
 using Xunit;
 
 namespace SIPSorcery.Net.UnitTests
@@ -59,10 +60,10 @@ namespace SIPSorcery.Net.UnitTests
             Assert.True(sdp.Media[0].Media == SDPMediaTypesEnum.audio, "The media type not parsed correctly.");
             Assert.True(sdp.Media[0].Port == 12228, "The connection port was not parsed correctly.");
             Assert.True(sdp.Media[0].GetFormatListToString() == "0 101", "The media format list was incorrect.");
-            Assert.True(sdp.Media[0].MediaFormats[0].FormatID == "0", "The highest priority media format ID was incorrect.");
-            Assert.True(sdp.Media[0].MediaFormats[0].Name == "PCMU", "The highest priority media format name was incorrect.");
-            Assert.Equal(SDPMediaFormatsEnum.PCMU, sdp.Media[0].MediaFormats[0].FormatCodec);
-            Assert.True(sdp.Media[0].MediaFormats[0].ClockRate == 8000, "The highest priority media format clockrate was incorrect.");
+            Assert.True(sdp.Media[0].MediaFormats[0].ID == 0, "The highest priority media format ID was incorrect.");
+            Assert.True(sdp.Media[0].MediaFormats[0].Name() == "PCMU", "The highest priority media format name was incorrect.");
+            Assert.Equal(SDPWellKnownMediaFormatsEnum.PCMU.ToString(), sdp.Media[0].MediaFormats[0].Name());
+            Assert.True(sdp.Media[0].MediaFormats[0].Rtpmap == "PCMU/8000", "The highest priority media format rtpmap was incorrect.");
         }
 
         [Fact]
@@ -70,7 +71,17 @@ namespace SIPSorcery.Net.UnitTests
         {
             logger.LogDebug("--> " + System.Reflection.MethodBase.GetCurrentMethod().Name);
             logger.BeginScope(System.Reflection.MethodBase.GetCurrentMethod().Name);
-            string sdpStr = "v=0\r\no=- 5 2 IN IP4 10.1.1.2\r\ns=CounterPath Bria\r\nc=IN IP4 144.137.16.240\r\nt=0 0\r\nm=audio 34640 RTP/AVP 0 8 101\r\na=sendrecv\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=alt:1 1 : STu/ZtOu 7hiLQmUp 10.1.1.2 34640\r\n";
+            string sdpStr = 
+                "v=0" + 
+                "o=- 5 2 IN IP4 10.1.1.2" + m_CRLF +
+                "s=CounterPath Bria" + m_CRLF +
+                "c=IN IP4 144.137.16.240" + m_CRLF +
+                "t=0 0" + m_CRLF +
+                "m=audio 34640 RTP/AVP 0 8 101" + m_CRLF +
+                "a=sendrecv" + m_CRLF +
+                "a=rtpmap:101 telephone-event/8000" + m_CRLF +
+                "a=fmtp:101 0-15" + m_CRLF +
+                "a=alt:1 1 : STu/ZtOu 7hiLQmUp 10.1.1.2 34640";
 
             SDP sdp = SDP.ParseSDPDescription(sdpStr);
 
@@ -78,12 +89,15 @@ namespace SIPSorcery.Net.UnitTests
 
             Assert.True(sdp.Connection.ConnectionAddress == "144.137.16.240", "The connection address was not parsed correctly.");
             Assert.True(sdp.Media[0].Port == 34640, "The connection port was not parsed correctly.");
-            Assert.True(sdp.Media[0].MediaFormats[0].Name == "PCMU", "The highest priority media format name was incorrect.");
-            Assert.Equal(SDPMediaFormatsEnum.PCMU, sdp.Media[0].MediaFormats[0].FormatCodec);
+            Assert.True(sdp.Media[0].MediaFormats[0].Name() == "PCMU", "The highest priority media format name was incorrect.");
+            Assert.Equal(SDPWellKnownMediaFormatsEnum.PCMU.ToString(), sdp.Media[0].MediaFormats[0].Name());
         }
 
+        /// <summary>
+        /// Tests that the telephone event media format gets correctly recognised.
+        /// </summary>
         [Fact]
-        public void ParseBadFormatSDPUnitTest()
+        public void ParseTelephoneEventSDPUnitTest()
         {
             logger.LogDebug("--> " + System.Reflection.MethodBase.GetCurrentMethod().Name);
             logger.BeginScope(System.Reflection.MethodBase.GetCurrentMethod().Name);
@@ -106,15 +120,15 @@ namespace SIPSorcery.Net.UnitTests
 
             logger.LogDebug(sdp.ToString());
 
-            logger.LogDebug($"audio format[0]: {sdp.Media[0].MediaFormats[0].ToString()}");
-            logger.LogDebug($"audio format[1]: {sdp.Media[0].MediaFormats[1].ToString()}");
+            //logger.LogDebug($"audio format[0]: {sdp.Media[0].MediaFormats[0]}");
+            //logger.LogDebug($"audio format[1]: {sdp.Media[0].MediaFormats[101]}");
 
             Assert.True(sdp.Connection.ConnectionAddress == "10.0.0.4", "The connection address was not parsed  correctly.");
             Assert.True(sdp.Username == "root", "The owner was not parsed correctly.");
             Assert.True(sdp.SessionName == "session", "The SessionName was not parsed correctly.");
             Assert.True(sdp.Media[0].Media == SDPMediaTypesEnum.audio, "The media type not parsed correctly.");
-            Assert.Equal(SDPMediaFormatsEnum.PCMU, sdp.Media[0].MediaFormats[0].FormatCodec);
-            Assert.Equal(SDPMediaFormatsEnum.Event, sdp.Media[0].MediaFormats[1].FormatCodec);
+            Assert.Equal(SDPWellKnownMediaFormatsEnum.PCMU.ToString(), sdp.Media[0].MediaFormats[0].Name());
+            Assert.Equal(SDP.TELEPHONE_EVENT_ATTRIBUTE, sdp.Media[0].MediaFormats[101].Name());
         }
 
         [Fact]
@@ -221,7 +235,7 @@ namespace SIPSorcery.Net.UnitTests
             //Assert.True(sdp.Connection.ConnectionAddress == "101.180.234.134", "The connection address was not parsed correctly.");
             Assert.NotEmpty(sdp.Media);
             Assert.True(sdp.Media[0].Media == SDPMediaTypesEnum.audio, "The media type not parsed correctly.");
-            Assert.Equal(SDPMediaFormatsEnum.PCMU, sdp.Media[0].MediaFormats[0].FormatCodec);
+            Assert.Equal(SDPWellKnownMediaFormatsEnum.PCMU.ToString(), sdp.Media[0].MediaFormats[0].Name());
             Assert.True(sdp.Media[1].Media == SDPMediaTypesEnum.video, "The media type not parsed correctly.");
             Assert.True(sdp.Media[1].Connection.ConnectionAddress == "10.0.0.10", "The connection address was not parsed correctly.");
         }
@@ -248,8 +262,8 @@ namespace SIPSorcery.Net.UnitTests
             Assert.True(sdp.Connection.ConnectionAddress == "10.2.0.110", "The connection address was not parsed correctly.");
             Assert.NotEmpty(sdp.Media);
             Assert.True(sdp.Media[0].Media == SDPMediaTypesEnum.image, "The media type not parsed correctly.");
-            Assert.True(sdp.Media[0].HasMediaFormat("t38"), "The highest priority media format ID was incorrect.");
-            Assert.True(sdp.Media[0].Transport == "udptl", "The media transport string was incorrect.");
+            //Assert.True(sdp.Media[0].HasMediaFormat("t38"), "The highest priority media format ID was incorrect.");
+            //Assert.True(sdp.Media[0].Transport == "udptl", "The media transport string was incorrect.");
         }
 
         /// <summary>
@@ -465,6 +479,67 @@ namespace SIPSorcery.Net.UnitTests
             SDP sdp = SDP.ParseSDPDescription(sdpStr);
 
             Assert.Equal(MediaStreamStatusEnum.RecvOnly, sdp.SessionMediaStreamStatus);
+            Assert.Equal(MediaStreamStatusEnum.RecvOnly, sdp.Media.First().MediaStreamStatus);
+        }
+
+        /// <summary>
+        /// Tests that the media stream status for an announcement is set correctly when it
+        /// differs from the session status.
+        /// </summary>
+        [Fact]
+        public void GetAnnMediaSteamDiffToStreamStatusUnitTest()
+        {
+            logger.LogDebug("--> " + System.Reflection.MethodBase.GetCurrentMethod().Name);
+            logger.BeginScope(System.Reflection.MethodBase.GetCurrentMethod().Name);
+
+            string sdpStr =
+                "v=0" + m_CRLF +
+                "o=root 3285 3285 IN IP4 10.0.0.4" + m_CRLF +
+                "s=session" + m_CRLF +
+                "c=IN IP4 10.0.0.4" + m_CRLF +
+                "t=0 0" + m_CRLF +
+                "a=recvonly" + m_CRLF +
+                "m=audio 12228 RTP/AVP 0 101" + m_CRLF +
+                "a=rtpmap:0 PCMU/8000" + m_CRLF +
+                "a=rtpmap:101 telephone-event/8000" + m_CRLF +
+                "a=fmtp:101 0-16" + m_CRLF +
+                "a=silenceSupp:off - - - -" + m_CRLF +
+                "a=ptime:20" + m_CRLF +
+                "a=sendonly";
+
+            SDP sdp = SDP.ParseSDPDescription(sdpStr);
+
+            Assert.Equal(MediaStreamStatusEnum.RecvOnly, sdp.SessionMediaStreamStatus);
+            Assert.Equal(MediaStreamStatusEnum.SendOnly, sdp.Media.First().MediaStreamStatus);
+        }
+
+        /// <summary>
+        /// Tests that the media stream status for an announcement is set correctly when there
+        /// is no session of announcement attribute.
+        /// </summary>
+        [Fact]
+        public void GetAnnMediaSteamNotreamStatusAttributesUnitTest()
+        {
+            logger.LogDebug("--> " + System.Reflection.MethodBase.GetCurrentMethod().Name);
+            logger.BeginScope(System.Reflection.MethodBase.GetCurrentMethod().Name);
+
+            string sdpStr =
+                "v=0" + m_CRLF +
+                "o=root 3285 3285 IN IP4 10.0.0.4" + m_CRLF +
+                "s=session" + m_CRLF +
+                "c=IN IP4 10.0.0.4" + m_CRLF +
+                "t=0 0" + m_CRLF +
+                "m=audio 12228 RTP/AVP 0 101" + m_CRLF +
+                "a=rtpmap:0 PCMU/8000" + m_CRLF +
+                "a=rtpmap:101 telephone-event/8000" + m_CRLF +
+                "a=fmtp:101 0-16" + m_CRLF +
+                "a=silenceSupp:off - - - -" + m_CRLF +
+                "a=ptime:20";
+
+            SDP sdp = SDP.ParseSDPDescription(sdpStr);
+
+            Assert.Null(sdp.SessionMediaStreamStatus);
+            Assert.Equal(MediaStreamStatusEnum.SendRecv, sdp.Media.First().MediaStreamStatus);
         }
 
         /// <summary>
@@ -822,7 +897,7 @@ a=max-message-size:262144";
             Assert.Equal("BUNDLE 0", rndTripSdp.Group);
             Assert.Single(rndTripSdp.Media);
             Assert.Equal("sha-256 6E:04:B9:05:60:84:22:B5:5A:A3:E9:00:6D:1A:29:FC:6F:C7:D9:79:D7:3B:BC:8D:BC:3D:7F:FC:94:3A:10:9E", rndTripSdp.Media.Single().DtlsFingerprint);
-            Assert.Single(rndTripSdp.Media.Single().MediaFormats);
+            Assert.Single(rndTripSdp.Media.Single().ApplicationMediaFormats);
             Assert.Equal(5000, rndTripSdp.Media.Single().SctpPort.Value);
             Assert.Equal(262144, rndTripSdp.Media.Single().MaxMessageSize);
         }
@@ -860,9 +935,191 @@ a=sctpmap:5000 webrtc-datachannel 1024";
             Assert.Equal("BUNDLE 0", rndTripSdp.Group);
             Assert.Single(rndTripSdp.Media);
             Assert.Equal("sha-256 81:5C:47:85:9C:3D:CC:E6:B5:94:0B:3B:65:D5:39:1A:CD:8F:48:2D:78:0F:9F:0B:18:93:BF:C9:F6:C9:8E:F8", rndTripSdp.DtlsFingerprint);
-            Assert.Single(rndTripSdp.Media.Single().MediaFormats);
+            Assert.Single(rndTripSdp.Media.Single().ApplicationMediaFormats);
             Assert.Equal(5000, rndTripSdp.Media.Single().SctpPort.Value);
             Assert.Equal(1024, rndTripSdp.Media.Single().MaxMessageSize);
+        }
+
+        /// <summary>
+        /// Tests that parsing an SDP media format attribute where the name has a hyphen in it works correctly.
+        /// </summary>
+        [Fact]
+        public void ParseMediaFormatWithHyphenNameUnitTest()
+        {
+            logger.LogDebug("--> " + System.Reflection.MethodBase.GetCurrentMethod().Name);
+            logger.BeginScope(System.Reflection.MethodBase.GetCurrentMethod().Name);
+
+            string sdpStr =
+                @"v=0
+o=- 1970544282 0 IN IP4 127.0.0.1
+s=-
+c=IN IP4 10.10.1.8
+t=0 0
+m=audio 57982 RTP/AVP 0 8
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+a=sendrecv
+m=video 57984 RTP/AVP 96
+a=rtpmap:96 H263-1998/90000
+a=fmtp:96 QCIF=3
+a=sendrecv";
+
+            SDP sdp = SDP.ParseSDPDescription(sdpStr);
+
+            logger.LogDebug(sdp.ToString());
+
+            SDP rndTripSdp = SDP.ParseSDPDescription(sdp.ToString());
+
+            Assert.Equal(96, rndTripSdp.Media.Where(x => x.Media == SDPMediaTypesEnum.video).Single().MediaFormats.Single().Key);
+            Assert.Equal("H263-1998", rndTripSdp.Media.Where(x => x.Media == SDPMediaTypesEnum.video).Single().MediaFormats.Single().Value.Name());
+        }
+
+        /// <summary>
+        /// Tests that parsing an SDP media format attribute where the name has additional information following a '/'
+        /// character is parsed correctly.
+        /// </summary>
+        [Fact]
+        public void ParseMediaFormatWithFowardSlashUnitTest()
+        {
+            logger.LogDebug("--> " + System.Reflection.MethodBase.GetCurrentMethod().Name);
+            logger.BeginScope(System.Reflection.MethodBase.GetCurrentMethod().Name);
+
+            string sdpStr =
+                @"v=0
+o=- 1970544282 0 IN IP4 127.0.0.1
+s=-
+c=IN IP4 10.10.1.8
+t=0 0
+m=audio 57982 RTP/AVP 111
+a=rtpmap:111 opus/48000/2
+a=fmtp:111 minptime=10;useinbandfec=1
+a=sendrecv";
+
+            SDP sdp = SDP.ParseSDPDescription(sdpStr);
+
+            logger.LogDebug(sdp.ToString());
+
+            SDP rndTripSdp = SDP.ParseSDPDescription(sdp.ToString());
+
+            Assert.Equal(111, rndTripSdp.Media.Where(x => x.Media == SDPMediaTypesEnum.audio).Single().MediaFormats.Single().Key);
+            Assert.Equal("opus", rndTripSdp.Media.Where(x => x.Media == SDPMediaTypesEnum.audio).Single().MediaFormats.Single().Value.Name());
+        }
+
+        /// <summary>
+        /// Tests that parsing an SDP media format attribute which specifies a dynamic media format fmtp in advance of the 
+        /// rtpmap works correctly.
+        /// </summary>
+        [Fact]
+        public void ParseOfferWithFmtpPreceedingRtmapTest()
+        {
+            logger.LogDebug("--> " + System.Reflection.MethodBase.GetCurrentMethod().Name);
+            logger.BeginScope(System.Reflection.MethodBase.GetCurrentMethod().Name);
+
+            string sdpStr =
+                @"v=0
+o=mozilla...THIS_IS_SDPARTA-80.0.1 5936658357711814578 0 IN IP4 0.0.0.0
+s=-
+t=0 0
+a=sendrecv
+a=fingerprint:sha-256 46:7C:4B:FD:47:E1:22:16:28:FC:52:94:C8:9D:7D:24:2F:C3:A8:66:02:17:0D:41:DF:34:99:1C:48:CB:9F:D5
+a=group:BUNDLE 0
+a=ice-options:trickle
+a=msid-semantic:WMS *
+m=video 9 UDP/TLS/RTP/SAVP 96
+c=IN IP4 0.0.0.0
+a=recvonly
+a=fmtp:96 max-fs=12288;max-fr=60
+a=ice-pwd:8136ef42e22d9d6b31d23b39a662bf8d
+a=ice-ufrag:2cbeec1e
+a=mid:0
+a=rtcp-mux
+a=rtpmap:96 VP8/90000
+a=setup:active
+a=ssrc:2404235415 cname:{7c06c5db-d3db-4891-b729-df4919014c3f}";
+
+            SDP sdp = SDP.ParseSDPDescription(sdpStr);
+
+            Assert.Equal(96, sdp.Media.Where(x => x.Media == SDPMediaTypesEnum.video).Single().MediaFormats.Single().Key);
+            Assert.Equal("VP8", sdp.Media.Where(x => x.Media == SDPMediaTypesEnum.video).Single().MediaFormats.Single().Value.Name());
+            Assert.Equal("VP8/90000", sdp.Media.Where(x => x.Media == SDPMediaTypesEnum.video).Single().MediaFormats.Single().Value.Rtpmap);
+            Assert.Equal("max-fs=12288;max-fr=60", sdp.Media.Where(x => x.Media == SDPMediaTypesEnum.video).Single().MediaFormats.Single().Value.Fmtp);
+        }
+
+        /// <summary>
+        /// Tests that parsing an SDP media format attribute for a Mission Critical Push To Talk (MCPTT)
+        /// announcement works correctly.
+        /// </summary>
+        [Fact]
+        public void ParseMcpttTest()
+        {
+            logger.LogDebug("--> " + System.Reflection.MethodBase.GetCurrentMethod().Name);
+            logger.BeginScope(System.Reflection.MethodBase.GetCurrentMethod().Name);
+
+            string sdpStr =
+                @"v=0
+o=root 5936658357711814578 0 IN IP4 0.0.0.0
+s=-
+t=0 0
+m=audio 55316 RTP/AVP 0 101
+a=rtpmap:0 PCMU/8000
+a=label:1
+a=rtpmap:101 telephone-event/8000
+a=fmtp:101 0-15
+a=ptime:20
+a=sendrecv
+m=application 55317 udp MCPTT
+a=fmtp:MCPTT mc_queueing;mc_priority=4";
+
+            SDP sdp = SDP.ParseSDPDescription(sdpStr);
+
+            logger.LogDebug(sdp.ToString());
+
+            SDP rndTripSdp = SDP.ParseSDPDescription(sdp.ToString());
+
+            Assert.Equal("MCPTT", rndTripSdp.Media.Where(x => x.Media == SDPMediaTypesEnum.application).Single().ApplicationMediaFormats.Single().Key);
+            Assert.Equal("mc_queueing;mc_priority=4", rndTripSdp.Media.Where(x => x.Media == SDPMediaTypesEnum.application).Single().ApplicationMediaFormats.Single().Value.Fmtp);
+        }
+
+        /// <summary>
+        /// Tests that a description attribute can be successfully round tripped.
+        /// </summary>
+        [Fact]
+        public void DescriptionAttributeRoundTripTest()
+        {
+            logger.LogDebug("--> " + System.Reflection.MethodBase.GetCurrentMethod().Name);
+            logger.BeginScope(System.Reflection.MethodBase.GetCurrentMethod().Name);
+
+            string sdpStr =
+                @"v=0
+o=root 5936658357711814578 0 IN IP4 0.0.0.0
+s=-
+i=A session description
+t=0 0
+m=audio 55316 RTP/AVP 0 101
+a=rtpmap:0 PCMU/8000
+a=label:1
+i=speech
+a=rtpmap:101 telephone-event/8000
+a=fmtp:101 0-15
+a=ptime:20
+a=sendrecv
+m=video 61682 UDP/TLS/RTP/SAVPF 96
+c=IN IP4 192.168.11.50
+a=rtpmap:96 VP8/90000
+a=label:2
+i=video title
+a=sendrecv
+";
+
+            SDP sdp = SDP.ParseSDPDescription(sdpStr);
+
+            logger.LogDebug(sdp.ToString());
+
+            SDP rndTripSdp = SDP.ParseSDPDescription(sdp.ToString());
+
+            Assert.Equal("A session description", rndTripSdp.SessionDescription);
+            Assert.Equal("speech", rndTripSdp.Media.Where(x => x.Media == SDPMediaTypesEnum.audio).Single().MediaDescription);
+            Assert.Equal("video title", rndTripSdp.Media.Where(x => x.Media == SDPMediaTypesEnum.video).Single().MediaDescription);
         }
     }
 }

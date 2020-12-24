@@ -20,10 +20,12 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using Serilog;
+using Serilog.Extensions.Logging;
 using SIPSorcery.Net;
 using SIPSorcery.SIP;
 using SIPSorcery.SIP.App;
 using SIPSorcery.Sys;
+using SIPSorceryMedia.Abstractions.V1;
 
 namespace SIPSorcery.UnitTests
 {
@@ -32,20 +34,20 @@ namespace SIPSorcery.UnitTests
         public static Microsoft.Extensions.Logging.ILogger InitTestLogger(Xunit.Abstractions.ITestOutputHelper output)
         {
 #if DEBUG
-            string template = "{Timestamp:yyyy-MM-dd HH:mm:ss.ffff} [{Level}] {Scope} {Message}{NewLine}{Exception}";
-            //string template = "{Timestamp:yyyy-MM-dd HH:mm:ss.ffff} [{Level}] ({ThreadId:000}){Scope} {Message}{NewLine}{Exception}";
-            var loggerFactory = new Microsoft.Extensions.Logging.LoggerFactory();
-            var loggerConfig = new LoggerConfiguration()
-                .MinimumLevel.Verbose()
+            string template = "{Timestamp:HH:mm:ss.ffff} [{Level}] {Scope} {Message}{NewLine}{Exception}";
+            //var loggerFactory = new Microsoft.Extensions.Logging.LoggerFactory();
+            var serilog = new LoggerConfiguration()
+                .MinimumLevel.Is(Serilog.Events.LogEventLevel.Debug)
                 .Enrich.WithProperty("ThreadId", System.Threading.Thread.CurrentThread.ManagedThreadId)
                 .WriteTo.TestOutput(output, outputTemplate: template)
                 .WriteTo.Console(outputTemplate: template)
                 .CreateLogger();
-            loggerFactory.AddSerilog(loggerConfig);
+            SIPSorcery.LogFactory.Set(new SerilogLoggerFactory(serilog));
+            return new SerilogLoggerProvider(serilog).CreateLogger("unit");
 
-            SIPSorcery.Sys.Log.LoggerFactory = loggerFactory;
+#else
+            return Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
 #endif
-            return SIPSorcery.Sys.Log.Logger;
         }
     }
 
@@ -163,7 +165,7 @@ namespace SIPSorcery.UnitTests
             SDPMediaAnnouncement audioAnnouncement = new SDPMediaAnnouncement(
                 SDPMediaTypesEnum.audio,
                1234,
-               new List<SDPMediaFormat> { new SDPMediaFormat(SDPMediaFormatsEnum.PCMU) });
+               new List<SDPAudioVideoMediaFormat> { new SDPAudioVideoMediaFormat(SDPWellKnownMediaFormatsEnum.PCMU) });
 
             audioAnnouncement.Transport = RTP_MEDIA_PROFILE;
 
@@ -182,7 +184,7 @@ namespace SIPSorcery.UnitTests
             SDPMediaAnnouncement audioAnnouncement = new SDPMediaAnnouncement(
                 SDPMediaTypesEnum.audio,
                1234,
-               new List<SDPMediaFormat> { new SDPMediaFormat(SDPMediaFormatsEnum.PCMU) });
+               new List<SDPAudioVideoMediaFormat> { new SDPAudioVideoMediaFormat(SDPWellKnownMediaFormatsEnum.PCMU) });
 
             audioAnnouncement.Transport = RTP_MEDIA_PROFILE;
 

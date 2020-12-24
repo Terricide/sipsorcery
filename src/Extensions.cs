@@ -1,6 +1,10 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Text;
+using Org.BouncyCastle.Crypto;
 
 namespace SIPSorcery
 {
@@ -24,6 +28,32 @@ namespace SIPSorcery
             return Enum.TryParse<T>(str, ignoreCase, out val);
 #endif
         }
+
+#if NET20
+        public static IPAddress MapToIPv6(this IPAddress addr)
+        {
+            if (addr.AddressFamily == AddressFamily.InterNetworkV6)
+            {
+                return addr;
+            }
+
+            var newAddr = new ushort[8]
+            {
+                0,
+                0,
+                0,
+                0,
+                0,
+                65535,
+                (ushort)(((addr.Address & 0xFF00) >> 8) | ((addr.Address & 0xFF) << 8)),
+                (ushort)(((addr.Address & 4278190080u) >> 24) | ((addr.Address & 0xFF0000) >> 8))
+            };
+            byte[] target = new byte[newAddr.Length * 2];
+            Buffer.BlockCopy(newAddr, 0, target, 0, newAddr.Length * 2);
+
+            return new IPAddress(target, 0u);
+        }
+#endif
 
         public static bool DualMode(this Socket socket)
         {
@@ -126,4 +156,10 @@ namespace SIPSorcery
         }
     }
 #endif
+
+    public class CertPair
+    {
+        public Org.BouncyCastle.Crypto.Tls.Certificate Certificate { get; set; }
+        public AsymmetricKeyParameter PrivateKey { get; set; }
+    }
 }

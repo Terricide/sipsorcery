@@ -14,16 +14,19 @@
 //-----------------------------------------------------------------------------
 
 using System;
-using System.Collections.Generic;
 using System.Net;
-using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Serilog;
+using Serilog.Extensions.Logging;
 using SIPSorcery.Media;
 using SIPSorcery.Net;
 using SIPSorcery.SIP;
 using SIPSorcery.SIP.App;
 using NAudio.Wave;
+using SIPSorceryMedia.Abstractions;
+using SIPSorceryMedia.Windows;
+using SIPSorceryMedia.Abstractions.V1;
 
 namespace demo
 {
@@ -31,7 +34,7 @@ namespace demo
     {
         private static int SIP_LISTEN_PORT = 5060;
 
-        private static Microsoft.Extensions.Logging.ILogger Log = SIPSorcery.Sys.Log.Logger;
+        private static Microsoft.Extensions.Logging.ILogger Log = NullLogger.Instance;
 
         private static readonly WaveFormat _waveFormat = new WaveFormat(8000, 16, 1);
         private static WaveFileWriter _waveFile;
@@ -41,13 +44,26 @@ namespace demo
         {
             Console.WriteLine("SIPSorcery Getting Started Demo");
 
-            AddConsoleLogger();
+            Log = AddConsoleLogger();
 
             _waveFile = new WaveFileWriter("output.mp3", _waveFormat);
 
             _sipTransport = new SIPTransport();
             _sipTransport.AddSIPChannel(new SIPUDPChannel(new IPEndPoint(IPAddress.Any, SIP_LISTEN_PORT)));
-            _sipTransport.SIPTransportRequestReceived += OnRequest;
+
+            var userAgent = new SIPUserAgent(_sipTransport, null, true);
+            userAgent.ServerCallCancelled += (uas) => Log.LogDebug("Incoming call cancelled by remote party.");
+            userAgent.OnCallHungup += (dialog) => _waveFile?.Close();
+            userAgent.OnIncomingCall += async (ua, req) =>
+            {
+                WindowsAudioEndPoint winAudioEP = new WindowsAudioEndPoint(new AudioEncoder());
+                VoIPMediaSession voipMediaSession = new VoIPMediaSession(winAudioEP.ToMediaEndPoints());
+                voipMediaSession.AcceptRtpFromAny = true;
+                voipMediaSession.OnRtpPacketReceived += OnRtpPacketReceived;
+
+                var uas = userAgent.AcceptCall(req);
+                await userAgent.Answer(uas, voipMediaSession);
+            };
 
             Console.WriteLine("press any key to exit...");
             Console.Read();
@@ -64,7 +80,7 @@ namespace demo
 
                 for (int index = 0; index < sample.Length; index++)
                 {
-                    if (rtpPacket.Header.PayloadType == (int)SDPMediaFormatsEnum.PCMA)
+                    if (rtpPacket.Header.PayloadType == (int)SDPWellKnownMediaFormatsEnum.PCMA)
                     {
                         short pcm = NAudio.Codecs.ALawDecoder.ALawToLinearSample(sample[index]);
                         byte[] pcmSample = new byte[] { (byte)(pcm & 0xFF), (byte)(pcm >> 8) };
@@ -81,79 +97,18 @@ namespace demo
         }
 
         /// <summary>
-        /// Because this is a server user agent the SIP transport must start listening for client user agents.
+        /// Adds a console logger. Can be omitted if internal SIPSorcery debug and warning messages are not required.
         /// </summary>
-        private static async Task OnRequest(SIPEndPoint localSIPEndPoint, SIPEndPoint remoteEndPoint, SIPRequest sipRequest)
+        private static Microsoft.Extensions.Logging.ILogger AddConsoleLogger()
         {
-            try
-            {
-                if (sipRequest.Header.From != null &&
-                sipRequest.Header.From.FromTag != null &&
-                sipRequest.Header.To != null &&
-                sipRequest.Header.To.ToTag != null)
-                {
-                    // This is an in-dialog request that will be handled directly by a user agent instance.
-                }
-                else if (sipRequest.Method == SIPMethodsEnum.INVITE)
-                {
-                    Log.LogInformation($"Incoming call request: {localSIPEndPoint}<-{remoteEndPoint} {sipRequest.URI}.");
-
-                    var userAgent = new SIPUserAgent(_sipTransport, null);
-                    userAgent.ServerCallCancelled += (uas) => Log.LogDebug("Incoming call cancelled by remote party.");
-                    userAgent.OnCallHungup += (dialog) => _waveFile?.Close();
-                    
-                    var rtpSession = new RtpAVSession(
-                        new AudioOptions
-                        {
-                            AudioSource = AudioSourcesEnum.CaptureDevice,
-                            AudioCodecs = new List<SDPMediaFormatsEnum> { SDPMediaFormatsEnum.PCMU, SDPMediaFormatsEnum.PCMA }
-                        },
-                        null);
-                    rtpSession.OnRtpPacketReceived += OnRtpPacketReceived;
-
-                    var uas = userAgent.AcceptCall(sipRequest);
-                    await userAgent.Answer(uas, rtpSession);
-
-                    if (userAgent.IsCallActive)
-                    {
-                        await rtpSession.Start();
-                    }
-                }
-                else if (sipRequest.Method == SIPMethodsEnum.BYE)
-                {
-                    SIPResponse byeResponse = SIPResponse.GetResponse(sipRequest, SIPResponseStatusCodesEnum.CallLegTransactionDoesNotExist, null);
-                    await _sipTransport.SendResponseAsync(byeResponse);
-                }
-                else if (sipRequest.Method == SIPMethodsEnum.SUBSCRIBE)
-                {
-                    SIPResponse notAllowededResponse = SIPResponse.GetResponse(sipRequest, SIPResponseStatusCodesEnum.MethodNotAllowed, null);
-                    await _sipTransport.SendResponseAsync(notAllowededResponse);
-                }
-                else if (sipRequest.Method == SIPMethodsEnum.OPTIONS || sipRequest.Method == SIPMethodsEnum.REGISTER)
-                {
-                    SIPResponse optionsResponse = SIPResponse.GetResponse(sipRequest, SIPResponseStatusCodesEnum.Ok, null);
-                    await _sipTransport.SendResponseAsync(optionsResponse);
-                }
-            }
-            catch (Exception reqExcp)
-            {
-                Log.LogWarning($"Exception handling {sipRequest.Method}. {reqExcp.Message}");
-            }
-        }
-
-        /// <summary>
-        ///  Adds a console logger. Can be omitted if internal SIPSorcery debug and warning messages are not required.
-        /// </summary>
-        private static void AddConsoleLogger()
-        {
-            var loggerFactory = new Microsoft.Extensions.Logging.LoggerFactory();
-            var loggerConfig = new LoggerConfiguration()
+            var serilogLogger = new LoggerConfiguration()
                 .Enrich.FromLogContext()
-                .MinimumLevel.Is(Serilog.Events.LogEventLevel.Information)
+                .MinimumLevel.Is(Serilog.Events.LogEventLevel.Debug)
                 .WriteTo.Console()
                 .CreateLogger();
-            loggerFactory.AddSerilog(loggerConfig);
-            SIPSorcery.Sys.Log.LoggerFactory = loggerFactory;
+            var factory = new SerilogLoggerFactory(serilogLogger);
+            SIPSorcery.LogFactory.Set(factory);
+            return factory.CreateLogger<Program>();
         }
     }
 }

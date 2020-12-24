@@ -16,9 +16,10 @@
  */
 // Modified by Andrés Leone Gámez
 
-using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using SIPSorcery.Sys;
 
@@ -30,67 +31,66 @@ namespace SIPSorcery.Net.Sctp
 {
     public class BlockingSCTPStream : SCTPStream
     {
-        private object sendLock = new object();
-        private Dictionary<int, SCTPMessage> undeliveredOutboundMessages = new Dictionary<int, SCTPMessage>();
-
+        private ConcurrentDictionary<int, SCTPMessage> undeliveredOutboundMessages = new ConcurrentDictionary<int, SCTPMessage>();
         private static ILogger logger = Log.Logger;
+        private SemaphoreSlim semaphore = new SemaphoreSlim(1);
 
         public BlockingSCTPStream(Association a, int id) : base(a, id) { }
 
         public override void send(string message)
         {
-            if (Monitor.TryEnter(sendLock, 60000))
-            {
-                try
-                {
-                    Association a = base.getAssociation();
-                    SCTPMessage m = a.makeMessage(message, this);
-                    if (m == null)
-                    {
-                        logger.LogError("SCTPMessage cannot be null, but it is");
-                    }
-                    a.sendAndBlock(m);
-                }
-                finally
-                {
-                    Monitor.Exit(sendLock);
-                }
-            }
-            else
-            {
-                throw new TimeoutException("Unable to send in 30 seconds");
-            }
+            sendasync(message).GetAwaiter().GetResult();
         }
 
         public override void send(byte[] message)
         {
-            if (Monitor.TryEnter(sendLock, 60000))
+            sendasync(message).GetAwaiter().GetResult();
+        }
+
+        public override async Task sendasync(byte[] message)
+        {
+            await semaphore.WaitAsync().ConfigureAwait(false);
+            try
             {
-                try
+                Association a = base.getAssociation();
+                SCTPMessage m = a.makeMessage(message, this);
+                if (m == null)
                 {
-                    Association a = base.getAssociation();
-                    SCTPMessage m = a.makeMessage(message, this);
-                    while (undeliveredOutboundMessages.Count > 1)
-                    {
-                        Thread.Sleep(10);
-                    }
-                    undeliveredOutboundMessages.Add(m.getSeq(), m);
-                    a.sendAndBlock(m);
+                    logger.LogError("SCTPMessage cannot be null, but it is");
+                    return;
                 }
-                finally
-                {
-                    Monitor.Exit(sendLock);
-                }
+                undeliveredOutboundMessages.AddOrUpdate(m.getSeq(), m, (id, b) => m);
+                a.sendAndBlock(m);
             }
-            else
+            finally
             {
-                throw new TimeoutException("Unable to send in 30 seconds");
+                semaphore.Release();
+            }
+        }
+
+        public override async Task sendasync(string message)
+        {
+            await semaphore.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                Association a = base.getAssociation();
+                SCTPMessage m = a.makeMessage(message, this);
+                if (m == null)
+                {
+                    logger.LogError("SCTPMessage cannot be null, but it is");
+                    return;
+                }
+                a.sendAndBlock(m);
+            }
+            finally
+            {
+                semaphore.Release();
             }
         }
 
         internal override void deliverMessage(SCTPMessage message)
         {
-            System.Threading.Tasks.Task.Run(message.run);
+            message.run();
         }
 
         public override void delivered(DataChunk d)
@@ -100,9 +100,8 @@ namespace SIPSorcery.Net.Sctp
             {
                 int ssn = d.getSSeqNo();
                 SCTPMessage st;
-                if (undeliveredOutboundMessages.TryGetValue(ssn, out st))
+                if (undeliveredOutboundMessages.TryRemove(ssn, out st))
                 {
-                    undeliveredOutboundMessages.Remove(ssn);
                     st.acked();
                 }
             }

@@ -17,7 +17,7 @@
 //-----------------------------------------------------------------------------
 
 using System;
-using System.Linq;
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using Org.BouncyCastle.Crypto.Tls;
 using Org.BouncyCastle.Security;
@@ -27,14 +27,18 @@ namespace SIPSorcery.Net
 {
     public class DtlsSrtpTransport : DatagramTransport, IDisposable
     {
+        public const int DEFAULT_RETRANSMISSION_WAIT_MILLIS = 100;
         public const int DEFAULT_MTU = 1500;
         public const int MIN_IP_OVERHEAD = 20;
         public const int MAX_IP_OVERHEAD = MIN_IP_OVERHEAD + 64;
         public const int UDP_OVERHEAD = 8;
         public const int DEFAULT_TIMEOUT_MILLISECONDS = 20000;
-        public const int DTLS_RECEIVE_ERROR_CODE = -1;
+        public const int DTLS_RETRANSMISSION_CODE = -1;
+        public const int DTLS_RECEIVE_ERROR_CODE = -2;
 
         private static readonly ILogger logger = Log.Logger;
+
+        private static readonly Random random = new Random();
 
         private IPacketTransformer srtpEncoder;
         private IPacketTransformer srtpDecoder;
@@ -42,7 +46,8 @@ namespace SIPSorcery.Net
         private IPacketTransformer srtcpDecoder;
         IDtlsSrtpPeer connection = null;
 
-        private PipedMemoryStream _inStream = new PipedMemoryStream();
+        /// <summary>The collection of chunks to be written.</summary>
+        private BlockingCollection<byte[]> _chunks = new BlockingCollection<byte[]>(new ConcurrentQueue<byte[]>());
 
         public DtlsTransport Transport { get; private set; }
 
@@ -51,6 +56,12 @@ namespace SIPSorcery.Net
         /// after.
         /// </summary>
         public int TimeoutMilliseconds = DEFAULT_TIMEOUT_MILLISECONDS;
+
+
+        /// <summary>
+        /// Sets the period in milliseconds that receive will wait before try retransmission
+        /// </summary>
+        public int RetransmissionMilliseconds = DEFAULT_RETRANSMISSION_WAIT_MILLIS;
 
         public Action<byte[]> OnDataReady;
 
@@ -62,25 +73,25 @@ namespace SIPSorcery.Net
         /// </summary>
         public event Action<AlertLevelsEnum, AlertTypesEnum, string> OnAlert;
 
-        private System.DateTime startTime = System.DateTime.MinValue;
+        private System.DateTime _startTime = System.DateTime.MinValue;
         private bool _isClosed = false;
 
         // Network properties
-        private int mtu;
-        private int receiveLimit;
-        private int sendLimit;
+        private int _waitMillis = DEFAULT_RETRANSMISSION_WAIT_MILLIS;
+        private int _mtu;
+        private int _receiveLimit;
+        private int _sendLimit;
 
-        private volatile bool handshakeComplete;
-        private volatile bool handshakeFailed;
-        private volatile bool handshaking;
+        private volatile bool _handshakeComplete;
+        private volatile bool _handshakeFailed;
+        private volatile bool _handshaking;
 
         public DtlsSrtpTransport(IDtlsSrtpPeer connection, int mtu = DEFAULT_MTU)
         {
             // Network properties
-            this.mtu = mtu;
-            this.receiveLimit = System.Math.Max(0, mtu - MIN_IP_OVERHEAD - UDP_OVERHEAD);
-            this.sendLimit = System.Math.Max(0, mtu - MAX_IP_OVERHEAD - UDP_OVERHEAD);
-
+            this._mtu = mtu;
+            this._receiveLimit = System.Math.Max(0, mtu - MIN_IP_OVERHEAD - UDP_OVERHEAD);
+            this._sendLimit = System.Math.Max(0, mtu - MAX_IP_OVERHEAD - UDP_OVERHEAD);
             this.connection = connection;
 
             connection.OnAlert += (level, type, description) => OnAlert?.Invoke(level, type, description);
@@ -120,17 +131,17 @@ namespace SIPSorcery.Net
 
         public bool IsHandshakeComplete()
         {
-            return handshakeComplete;
+            return _handshakeComplete;
         }
 
         public bool IsHandshakeFailed()
         {
-            return handshakeFailed;
+            return _handshakeFailed;
         }
 
         public bool IsHandshaking()
         {
-            return handshaking;
+            return _handshaking;
         }
 
         public bool DoHandshake()
@@ -154,10 +165,11 @@ namespace SIPSorcery.Net
         {
             logger.LogDebug("DTLS commencing handshake as client.");
 
-            if (!handshaking && !handshakeComplete)
+            if (!_handshaking && !_handshakeComplete)
             {
-                this.startTime = System.DateTime.Now;
-                this.handshaking = true;
+                this._waitMillis = RetransmissionMilliseconds;
+                this._startTime = System.DateTime.Now;
+                this._handshaking = true;
                 SecureRandom secureRandom = new SecureRandom();
                 DtlsClientProtocol clientProtocol = new DtlsClientProtocol(secureRandom);
                 try
@@ -177,9 +189,9 @@ namespace SIPSorcery.Net
                         srtcpEncoder = GenerateRtcpEncoder();
                     }
                     // Declare handshake as complete
-                    handshakeComplete = true;
-                    handshakeFailed = false;
-                    handshaking = false;
+                    _handshakeComplete = true;
+                    _handshakeFailed = false;
+                    _handshaking = false;
                     // Warn listeners handshake completed
                     //UnityEngine.Debug.Log("DTLS Handshake Completed");
 
@@ -190,9 +202,9 @@ namespace SIPSorcery.Net
                     logger.LogWarning($"DTLS handshake as client failed. {excp.Message}");
 
                     // Declare handshake as failed
-                    handshakeComplete = false;
-                    handshakeFailed = true;
-                    handshaking = false;
+                    _handshakeComplete = false;
+                    _handshakeFailed = true;
+                    _handshaking = false;
                     // Warn listeners handshake completed
                     //UnityEngine.Debug.Log("DTLS Handshake failed\n" + e);
                 }
@@ -204,10 +216,11 @@ namespace SIPSorcery.Net
         {
             logger.LogDebug("DTLS commencing handshake as server.");
 
-            if (!handshaking && !handshakeComplete)
+            if (!_handshaking && !_handshakeComplete)
             {
-                this.startTime = System.DateTime.Now;
-                this.handshaking = true;
+                this._waitMillis = RetransmissionMilliseconds;
+                this._startTime = System.DateTime.Now;
+                this._handshaking = true;
                 SecureRandom secureRandom = new SecureRandom();
                 DtlsServerProtocol serverProtocol = new DtlsServerProtocol(secureRandom);
                 try
@@ -227,9 +240,9 @@ namespace SIPSorcery.Net
                         srtcpEncoder = GenerateRtcpEncoder();
                     }
                     // Declare handshake as complete
-                    handshakeComplete = true;
-                    handshakeFailed = false;
-                    handshaking = false;
+                    _handshakeComplete = true;
+                    _handshakeFailed = false;
+                    _handshaking = false;
                     // Warn listeners handshake completed
                     //UnityEngine.Debug.Log("DTLS Handshake Completed");
                     return true;
@@ -239,9 +252,9 @@ namespace SIPSorcery.Net
                     logger.LogWarning($"DTLS handshake as server failed. {excp.Message}");
 
                     // Declare handshake as failed
-                    handshakeComplete = false;
-                    handshakeFailed = true;
-                    handshaking = false;
+                    _handshakeComplete = false;
+                    _handshakeFailed = true;
+                    _handshaking = false;
                     // Warn listeners handshake completed
                     //UnityEngine.Debug.Log("DTLS Handshake failed\n"+ e);
                 }
@@ -331,7 +344,10 @@ namespace SIPSorcery.Net
 
         public byte[] UnprotectRTP(byte[] packet, int offset, int length)
         {
-            return this.srtpDecoder.ReverseTransform(packet, offset, length);
+            lock (this.srtpDecoder)
+            {
+                return this.srtpDecoder.ReverseTransform(packet, offset, length);
+            }
         }
 
         public int UnprotectRTP(byte[] payload, int length, out int outLength)
@@ -351,7 +367,10 @@ namespace SIPSorcery.Net
 
         public byte[] ProtectRTP(byte[] packet, int offset, int length)
         {
-            return this.srtpEncoder.Transform(packet, offset, length);
+            lock (this.srtpEncoder)
+            {
+                return this.srtpEncoder.Transform(packet, offset, length);
+            }
         }
 
         public int ProtectRTP(byte[] payload, int length, out int outLength)
@@ -371,7 +390,10 @@ namespace SIPSorcery.Net
 
         public byte[] UnprotectRTCP(byte[] packet, int offset, int length)
         {
-            return this.srtcpDecoder.ReverseTransform(packet, offset, length);
+            lock (this.srtcpDecoder)
+            {
+                return this.srtcpDecoder.ReverseTransform(packet, offset, length);
+            }
         }
 
         public int UnprotectRTCP(byte[] payload, int length, out int outLength)
@@ -391,7 +413,10 @@ namespace SIPSorcery.Net
 
         public byte[] ProtectRTCP(byte[] packet, int offset, int length)
         {
-            return this.srtcpEncoder.Transform(packet, offset, length);
+            lock (this.srtcpEncoder)
+            {
+                return this.srtcpEncoder.Transform(packet, offset, length);
+            }
         }
 
         public int ProtectRTCP(byte[] payload, int length, out int outLength)
@@ -414,31 +439,53 @@ namespace SIPSorcery.Net
         /// </summary>
         private int GetMillisecondsRemaining()
         {
-            return TimeoutMilliseconds - (int)(System.DateTime.Now - this.startTime).TotalMilliseconds;
+            return TimeoutMilliseconds - (int)(System.DateTime.Now - this._startTime).TotalMilliseconds;
         }
 
         public int GetReceiveLimit()
         {
-            return this.receiveLimit;
+            return this._receiveLimit;
         }
 
         public int GetSendLimit()
         {
-            return this.sendLimit;
+            return this._sendLimit;
         }
 
         public void WriteToRecvStream(byte[] buf)
         {
-            _inStream.Write(buf, 0, buf.Length);
+            _chunks.Add(buf);
+        }
+
+        public int Read(byte[] buffer, int offset, int count, int timeout)
+        {
+            try
+            {
+                if (_chunks.TryTake(out var item, timeout))
+                {
+                    Buffer.BlockCopy(item, 0, buffer, 0, item.Length);
+                    return item.Length;
+                }
+            }
+            catch (ObjectDisposedException) { }
+            catch (ArgumentNullException) { }
+
+            return DTLS_RETRANSMISSION_CODE;
         }
 
         public int Receive(byte[] buf, int off, int len, int waitMillis)
         {
-            if (!handshakeComplete)
+            if (!_handshakeComplete)
             {
                 // The timeout for the handshake applies from when it started rather than
                 // for each individual receive..
                 int millisecondsRemaining = GetMillisecondsRemaining();
+
+                //Handle DTLS 1.3 Retransmission time (100 to 6000 ms)
+                //https://tools.ietf.org/id/draft-ietf-tls-dtls13-31.html#rfc.section.5.7
+                //As HandshakeReliable class contains too long hardcoded initial waitMillis (1000 ms) we must control this internally
+                //PS: Random extra delta time guarantee that work in local networks.
+                waitMillis = _waitMillis + random.Next(5, 25);
 
                 if (millisecondsRemaining <= 0)
                 {
@@ -447,8 +494,17 @@ namespace SIPSorcery.Net
                 }
                 else if (!_isClosed)
                 {
-                    waitMillis = (int)System.Math.Min(waitMillis, millisecondsRemaining);
-                    return _inStream.Read(buf, off, len, waitMillis);
+                    waitMillis = (int)Math.Min(waitMillis, millisecondsRemaining);
+                    var receiveLen = Read(buf, off, len, waitMillis);
+
+                    //Handle DTLS 1.3 Retransmission time (100 to 6000 ms)
+                    //https://tools.ietf.org/id/draft-ietf-tls-dtls13-31.html#rfc.section.5.7
+                    if (receiveLen == DTLS_RETRANSMISSION_CODE)
+                        _waitMillis = BackOff(_waitMillis);
+                    else
+                        _waitMillis = RetransmissionMilliseconds;
+
+                    return receiveLen;
                 }
                 else
                 {
@@ -457,7 +513,7 @@ namespace SIPSorcery.Net
             }
             else if (!_isClosed)
             {
-                return _inStream.Read(buf, off, len, waitMillis);
+                return Read(buf, off, len, waitMillis);
             }
             else
             {
@@ -467,20 +523,21 @@ namespace SIPSorcery.Net
 
         public void Send(byte[] buf, int off, int len)
         {
-            byte[] temp = buf;
-            if (buf.Length != len || off != 0)
+            if (len != buf.Length)
             {
-                temp = new byte[len];
-                Buffer.BlockCopy(buf, off, temp, 0, len);
+                // Only create a new buffer and copy bytes if the length is different
+                var tempBuf = new byte[len];
+                Buffer.BlockCopy(buf, off, tempBuf, 0, len);
+                buf = tempBuf;
             }
-            OnDataReady?.Invoke(temp);
+            OnDataReady?.Invoke(buf);
         }
 
         public virtual void Close()
         {
             _isClosed = true;
-            this.startTime = System.DateTime.MinValue;
-            _inStream.Close();
+            this._startTime = System.DateTime.MinValue;
+            this._chunks?.Dispose();
         }
 
         /// <summary>
@@ -497,6 +554,16 @@ namespace SIPSorcery.Net
         public void Dispose()
         {
             Close();
+        }
+
+        /// <summary>
+        /// Handle retransmission time based in DTLS 1.3 
+        /// </summary>
+        /// <param name="currentWaitMillis"></param>
+        /// <returns></returns>
+        protected virtual int BackOff(int currentWaitMillis)
+        {
+            return System.Math.Min(currentWaitMillis * 2, 6000);
         }
     }
 }

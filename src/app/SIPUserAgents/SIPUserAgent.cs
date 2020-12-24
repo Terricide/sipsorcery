@@ -89,6 +89,12 @@ namespace SIPSorcery.SIP.App
         private SIPDialogue m_sipDialogue;
 
         /// <summary>
+        /// When a call is hungup a reference is kept to the BYE transaction so it can
+        /// be monitored for delivery.
+        /// </summary>
+        private SIPNonInviteTransaction m_byeTransaction;
+
+        /// <summary>
         /// Holds the call descriptor for an in progress client (outbound) call.
         /// </summary>
         private SIPCallDescriptor m_callDescriptor;
@@ -127,6 +133,66 @@ namespace SIPSorcery.SIP.App
             get
             {
                 return m_sipDialogue?.DialogueState == SIPDialogueStateEnum.Confirmed;
+            }
+        }
+
+        /// <summary>
+        /// Indicates whether a call initiated by this user agent is in progress but is yet
+        /// to get a ring or progress response.
+        /// </summary>
+        public bool IsCalling
+        {
+            get
+            {
+                if (!IsCallActive && m_uac != null && m_uac.ServerTransaction != null)
+                {
+                    return m_uac.ServerTransaction.TransactionState == SIPTransactionStatesEnum.Calling ||
+                    m_uac.ServerTransaction.TransactionState == SIPTransactionStatesEnum.Trying;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Indicates whether a call initiated by this user agent has received a ringing or progress response.
+        /// </summary>
+        public bool IsRinging
+        {
+            get
+            {
+                if (!IsCallActive && m_uac != null && m_uac.ServerTransaction != null)
+                {
+                    return m_uac.ServerTransaction.TransactionState == SIPTransactionStatesEnum.Proceeding;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Indicates whether the user agent is in the process of hanging up or cancelling a call.
+        /// </summary>
+        public bool IsHangingUp
+        {
+            get
+            {
+                if (m_uac != null && m_uac.m_cancelTransaction != null && m_uac.m_cancelTransaction.DeliveryPending)
+                {
+                    return true;
+                }
+                else if(m_byeTransaction != null && m_byeTransaction.DeliveryPending)
+                {
+                    return true;
+                }
+                else
+                {
+                    return false;
+                }
             }
         }
 
@@ -323,6 +389,11 @@ namespace SIPSorcery.SIP.App
         /// <param name="mediaSession">The RTP session for the call.</param>
         public Task<bool> Call(string dst, string username, string password, IMediaSession mediaSession)
         {
+            if (mediaSession == null)
+            {
+                throw new ArgumentNullException("mediaSession", "A media session must be supplied when placing a call.");
+            }
+
             if (!SIPURI.TryParse(dst, out var dstUri))
             {
                 throw new ApplicationException("The destination was not recognised as a valid SIP URI.");
@@ -365,12 +436,12 @@ namespace SIPSorcery.SIP.App
         {
             TaskCompletionSource<bool> callResult = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            await InitiateCallAsync(callDescriptor, mediaSession).ConfigureAwait(false);
-
             ClientCallAnswered += (uac, resp) => callResult.TrySetResult(true);
             ClientCallFailed += (uac, errorMessage, result) => callResult.TrySetResult(false);
 
-            return callResult.Task.Result;
+            await InitiateCallAsync(callDescriptor, mediaSession).ConfigureAwait(false);
+
+            return await callResult.Task.ConfigureAwait(false);
         }
 
         /// <summary>
@@ -385,7 +456,7 @@ namespace SIPSorcery.SIP.App
 
             m_callDescriptor = sipCallDescriptor;
 
-            m_uac = new SIPClientUserAgent(m_transport);
+            m_uac = new SIPClientUserAgent(m_transport, m_outboundProxy);
             m_uac.CallTrying += ClientCallTryingHandler;
             m_uac.CallRinging += ClientCallRingingHandler;
             m_uac.CallAnswered += ClientCallAnsweredHandler;
@@ -456,9 +527,10 @@ namespace SIPSorcery.SIP.App
                 MediaSession?.Close("call hungup");
             }
 
-            if (m_sipDialogue?.DialogueState != SIPDialogueStateEnum.Terminated)
+            if (m_sipDialogue != null && m_sipDialogue.DialogueState != SIPDialogueStateEnum.Terminated)
             {
-                m_sipDialogue?.Hangup(m_transport, m_outboundProxy);
+                m_sipDialogue.Hangup(m_transport, m_outboundProxy);
+                m_byeTransaction = m_sipDialogue.m_byeTransaction;
             }
 
             IsOnLocalHold = false;
@@ -479,7 +551,7 @@ namespace SIPSorcery.SIP.App
         public SIPServerUserAgent AcceptCall(SIPRequest inviteRequest)
         {
             UASInviteTransaction uasTransaction = new UASInviteTransaction(m_transport, inviteRequest, m_outboundProxy);
-            SIPServerUserAgent uas = new SIPServerUserAgent(m_transport, m_outboundProxy, null, null, SIPCallDirection.In, null, null, null, uasTransaction);
+            SIPServerUserAgent uas = new SIPServerUserAgent(m_transport, m_outboundProxy, null, null, SIPCallDirection.In, null, null, uasTransaction);
             uas.ClientTransaction.TransactionStateChanged += (tx) => OnTransactionStateChange?.Invoke(tx);
             uas.ClientTransaction.TransactionTraceMessage += (tx, msg) => OnTransactionTraceMessage?.Invoke(tx, msg);
             uas.CallCancelled += (pendingUas) =>
@@ -843,9 +915,19 @@ namespace SIPSorcery.SIP.App
                         }
                         else
                         {
-                            var answerSdp = MediaSession.CreateAnswer(null);
-
                             CheckRemotePartyHoldCondition(MediaSession.RemoteDescription);
+
+                            if (MediaSession.HasAudio)
+                            {
+                                MediaSession.SetMediaStreamStatus(SDPMediaTypesEnum.audio, GetStreamStatusForOnHoldState());
+                            }
+
+                            if (MediaSession.HasVideo)
+                            {
+                                MediaSession.SetMediaStreamStatus(SDPMediaTypesEnum.video, GetStreamStatusForOnHoldState());
+                            }
+
+                            var answerSdp = MediaSession.CreateAnswer(null);
 
                             m_sipDialogue.RemoteSDP = sipRequest.Body;
                             m_sipDialogue.SDP = answerSdp.ToString();
@@ -904,6 +986,11 @@ namespace SIPSorcery.SIP.App
                 {
                     OnTransferNotify?.Invoke(sipRequest.Body);
                 }
+            }
+            else if (m_isTransportExclusive)
+            {
+                SIPResponse notSupportedResponse = SIPResponse.GetResponse(sipRequest, SIPResponseStatusCodesEnum.NotImplemented, null);
+                await m_transport.SendResponseAsync(notSupportedResponse).ConfigureAwait(false);
             }
         }
 
@@ -1377,14 +1464,15 @@ namespace SIPSorcery.SIP.App
                 }
                 else
                 {
-                    logger.LogDebug($"Call attempt was answered with {sipResponse.ShortDescription} but an {setDescriptionResult} error occurred setting the remote description.");
+                    logger.LogWarning($"Call attempt was answered with {sipResponse.ShortDescription} but an {setDescriptionResult} error occurred setting the remote description.");
                     ClientCallFailed?.Invoke(uac, $"Failed to set the remote description {setDescriptionResult}", sipResponse);
+                    uac.SIPDialogue?.Hangup(this.m_transport, this.m_outboundProxy);
                     CallEnded();
                 }
             }
             else
             {
-                logger.LogDebug($"Call attempt was answered with failure response {sipResponse.ShortDescription}.");
+                logger.LogWarning($"Call attempt was answered with failure response {sipResponse.ShortDescription}.");
                 ClientCallFailed?.Invoke(uac, sipResponse.ReasonPhrase, sipResponse);
                 CallEnded();
             }
@@ -1519,7 +1607,7 @@ namespace SIPSorcery.SIP.App
 
             if (IsOnLocalHold && IsOnRemoteHold)
             {
-                streamStatus = MediaStreamStatusEnum.None;
+                streamStatus = MediaStreamStatusEnum.Inactive;
             }
             else if (!IsOnLocalHold && !IsOnRemoteHold)
             {

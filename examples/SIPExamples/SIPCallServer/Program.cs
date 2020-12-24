@@ -18,16 +18,19 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Serilog;
-using Serilog.Sinks.SystemConsole.Themes;
+using Serilog.Extensions.Logging;
 using SIPSorcery.Media;
 using SIPSorcery.Net;
 using SIPSorcery.SIP;
 using SIPSorcery.SIP.App;
 using SIPSorcery.Sys;
+using SIPSorceryMedia.Abstractions.V1;
 
 namespace SIPSorcery
 {
@@ -61,14 +64,14 @@ namespace SIPSorcery
 
     class Program
     {
-        private static string DEFAULT_CALL_DESTINATION = "sip:*61@192.168.11.48";
-        private static string DEFAULT_TRANSFER_DESTINATION = "sip:*61@192.168.11.48";
+        //private static string DEFAULT_CALL_DESTINATION = "sip:*61@192.168.0.48";
+        private static string DEFAULT_CALL_DESTINATION = "sip:aaron@127.0.0.1:7060;transport=tcp";
+        private static string DEFAULT_TRANSFER_DESTINATION = "sip:*61@192.168.0.48";
         private static int SIP_LISTEN_PORT = 5060;
-        private const string MUSIC_FILE_PCMU = "media/Macroform_-_Simplicity.ulaw";
-        private const string MUSIC_FILE_PCMA = "media/Macroform_-_Simplicity.alaw";
-        private const string MUSIC_FILE_G722 = "media/Macroform_-_Simplicity.g722";
+        private static int SIPS_LISTEN_PORT = 5061;
+        private static string SIPS_CERTIFICATE_PATH = "localhost.pfx";
 
-        private static Microsoft.Extensions.Logging.ILogger Log = SIPSorcery.Sys.Log.Logger;
+        private static Microsoft.Extensions.Logging.ILogger Log = NullLogger.Instance;
 
         /// <summary>
         /// The set of SIP accounts available for registering and/or authenticating calls.
@@ -102,12 +105,15 @@ namespace SIPSorcery
             Console.WriteLine("Press 't' to transfer the newest call to the default destination.");
             Console.WriteLine("Press 'q' to quit.");
 
-            AddConsoleLogger();
+            Log = AddConsoleLogger();
 
             // Set up a default SIP transport.
             _sipTransport = new SIPTransport();
             _sipTransport.AddSIPChannel(new SIPUDPChannel(new IPEndPoint(IPAddress.Any, SIP_LISTEN_PORT)));
             _sipTransport.AddSIPChannel(new SIPUDPChannel(new IPEndPoint(IPAddress.IPv6Any, SIP_LISTEN_PORT)));
+            _sipTransport.AddSIPChannel(new SIPTCPChannel(new IPEndPoint(IPAddress.Any, SIP_LISTEN_PORT)));
+            var localhostCertificate = new X509Certificate2(SIPS_CERTIFICATE_PATH);
+            _sipTransport.AddSIPChannel(new SIPTLSChannel(localhostCertificate, new IPEndPoint(IPAddress.Any, SIPS_LISTEN_PORT)));
             // If it's desired to listen on a single IP address use the equivalent of:
             //_sipTransport.AddSIPChannel(new SIPUDPChannel(new IPEndPoint(IPAddress.Parse("192.168.11.50"), SIP_LISTEN_PORT)));
             EnableTraceLogs(_sipTransport, true);
@@ -220,8 +226,8 @@ namespace SIPSorcery
                             foreach (var call in _calls)
                             {
                                 int duration = Convert.ToInt32(DateTimeOffset.Now.Subtract(call.Value.Dialogue.Inserted).TotalSeconds);
-                                uint rtpSent = (call.Value.MediaSession as RtpAudioSession).RtpPacketsSent;
-                                uint rtpRecv = (call.Value.MediaSession as RtpAudioSession).RtpPacketsReceived;
+                                uint rtpSent = (call.Value.MediaSession as VoIPMediaSession).AudioRtcpSession.PacketsSentCount;
+                                uint rtpRecv = (call.Value.MediaSession as VoIPMediaSession).AudioRtcpSession.PacketsReceivedCount;
                                 Log.LogInformation($"{call.Key}: {call.Value.Dialogue.RemoteTarget} {duration}s {rtpSent}/{rtpRecv}");
                             }
                         }
@@ -291,28 +297,22 @@ namespace SIPSorcery
         /// <param name="dst">THe destination specified on an incoming call. Can be used to
         /// set the audio source.</param>
         /// <returns>A new RTP session object.</returns>
-        private static RtpAudioSession CreateRtpSession(SIPUserAgent ua, string dst)
+        private static VoIPMediaSession CreateRtpSession(SIPUserAgent ua, string dst)
         {
-            List<SDPMediaFormatsEnum> codecs = new List<SDPMediaFormatsEnum> { SDPMediaFormatsEnum.PCMU, SDPMediaFormatsEnum.PCMA, SDPMediaFormatsEnum.G722 };
+            List<AudioCodecsEnum> codecs = new List<AudioCodecsEnum> { AudioCodecsEnum.PCMU, AudioCodecsEnum.PCMA, AudioCodecsEnum.G722 };
 
             var audioSource = AudioSourcesEnum.SineWave;
-            if (string.IsNullOrEmpty(dst) || !Enum.TryParse<AudioSourcesEnum>(dst, out audioSource))
+            if (string.IsNullOrEmpty(dst) || !Enum.IsDefined(typeof(AudioSourcesEnum), dst) || !Enum.TryParse(dst, out audioSource))
             {
-                audioSource = AudioSourcesEnum.Silence;
+                audioSource = AudioSourcesEnum.Music;
             }
-
-            var audioOptions = new AudioSourceOptions { AudioSource = audioSource };
-            if (audioSource == AudioSourcesEnum.Music)
-            {
-                audioOptions.SourceFiles = new Dictionary<SDPMediaFormatsEnum, string>();
-                if (codecs.Contains(SDPMediaFormatsEnum.PCMA)) { audioOptions.SourceFiles.Add(SDPMediaFormatsEnum.PCMA, MUSIC_FILE_PCMA); }
-                if (codecs.Contains(SDPMediaFormatsEnum.PCMU)) { audioOptions.SourceFiles.Add(SDPMediaFormatsEnum.PCMU, MUSIC_FILE_PCMU); }
-                if (codecs.Contains(SDPMediaFormatsEnum.G722)) { audioOptions.SourceFiles.Add(SDPMediaFormatsEnum.G722, MUSIC_FILE_G722); }
-            };
 
             Log.LogInformation($"RTP audio session source set to {audioSource}.");
 
-            var rtpAudioSession = new RtpAudioSession(audioOptions, codecs);
+            AudioExtrasSource audioExtrasSource = new AudioExtrasSource(new AudioEncoder(), new AudioSourceOptions { AudioSource = audioSource });
+            audioExtrasSource.RestrictFormats(formats => codecs.Contains(formats.Codec) );
+            var rtpAudioSession = new VoIPMediaSession(new MediaEndPoints { AudioSource = audioExtrasSource });
+            rtpAudioSession.AcceptRtpFromAny = true;
 
             // Wire up the event handler for RTP packets received from the remote party.
             rtpAudioSession.OnRtpPacketReceived += (ep, type, rtp) => OnRtpPacketReceived(ua, type, rtp);
@@ -469,21 +469,6 @@ namespace SIPSorcery
         }
 
         /// <summary>
-        ///  Adds a console logger. Can be omitted if internal SIPSorcery debug and warning messages are not required.
-        /// </summary>
-        private static void AddConsoleLogger()
-        {
-            var loggerFactory = new Microsoft.Extensions.Logging.LoggerFactory();
-            var loggerConfig = new LoggerConfiguration()
-                .Enrich.FromLogContext()
-                .MinimumLevel.Is(Serilog.Events.LogEventLevel.Debug)
-                .WriteTo.Console(theme: AnsiConsoleTheme.Code)
-                .CreateLogger();
-            loggerFactory.AddSerilog(loggerConfig);
-            SIPSorcery.Sys.Log.LoggerFactory = loggerFactory;
-        }
-
-        /// <summary>
         /// Enable detailed SIP log messages.
         /// </summary>
         private static void EnableTraceLogs(SIPTransport sipTransport, bool fullSIP)
@@ -553,6 +538,21 @@ namespace SIPSorcery
             {
                 Log.LogDebug($"Response retransmit {count} for response {resp.ShortDescription}, initial transmit {DateTime.Now.Subtract(tx.InitialTransmit).TotalSeconds.ToString("0.###")}s ago.");
             };
+        }
+
+        /// <summary>
+        /// Adds a console logger. Can be omitted if internal SIPSorcery debug and warning messages are not required.
+        /// </summary>
+        private static Microsoft.Extensions.Logging.ILogger AddConsoleLogger()
+        {
+            var serilogLogger = new LoggerConfiguration()
+                .Enrich.FromLogContext()
+                .MinimumLevel.Is(Serilog.Events.LogEventLevel.Debug)
+                .WriteTo.Console()
+                .CreateLogger();
+            var factory = new SerilogLoggerFactory(serilogLogger);
+            SIPSorcery.LogFactory.Set(factory);
+            return factory.CreateLogger<Program>();
         }
     }
 }

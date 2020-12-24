@@ -19,13 +19,13 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
-using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Serilog;
+using Serilog.Extensions.Logging;
 using SIPSorcery.Net;
-using SIPSorcery.Sys;
 using WebSocketSharp;
 using WebSocketSharp.Net.WebSockets;
 using WebSocketSharp.Server;
@@ -63,7 +63,7 @@ namespace SIPSorcery.Examples
         private const int FFPLAY_DEFAULT_AUDIO_PORT = 5016;
         private const int FFPLAY_DEFAULT_VIDEO_PORT = 5018;
 
-        private static Microsoft.Extensions.Logging.ILogger logger = SIPSorcery.Sys.Log.Logger;
+        private static Microsoft.Extensions.Logging.ILogger logger = NullLogger.Instance;
 
         private static WebSocketServer _webSocketServer;
         private static RTCPeerConnection _activePeerConnection;
@@ -76,28 +76,22 @@ namespace SIPSorcery.Examples
         /// codecs. It was observed to select the wrong codec for the RTP header payload ID it was 
         /// receiving. It may be that ffplay decides it can choose it's favorite codec and the remote
         /// party will honor that. The simple fix is to filter to a single audio and video codec.
-        /// </summary>
-        private static List<SDPMediaFormatsEnum> AudioFormatsFilter = new List<SDPMediaFormatsEnum> { SDPMediaFormatsEnum.OPUS };
-        private static List<SDPMediaFormatsEnum> VideoFormatsFilter = new List<SDPMediaFormatsEnum> { SDPMediaFormatsEnum.VP9 };
-
-        /// <summary>
+        ///
         /// Set the codecs sent when the offer is made to the remote peer. Note that no encoding/decoding is
         /// done by this program. ffplay will need to support the selected codec.
         /// </summary>
-        private static List<SDPMediaFormat> AudioOfferFormats = new List<SDPMediaFormat> {
-            new SDPMediaFormat(SDPMediaFormatsEnum.OPUS)
-            {
-                FormatID = "111",
-                FormatAttribute = "opus/48000/2",
-                FormatParameterAttribute = "minptime=10;useinbandfec=1",
-            }};
-        private static List<SDPMediaFormat> VideoOfferFormats = new List<SDPMediaFormat> { new SDPMediaFormat(SDPMediaFormatsEnum.VP9) };
+        private static List<SDPAudioVideoMediaFormat> AudioOfferFormats = new List<SDPAudioVideoMediaFormat> {
+            new SDPAudioVideoMediaFormat(SDPMediaTypesEnum.audio, 111, "OPUS", 48000, 2, "minptime=10;useinbandfec=1")
+        };
+        private static List<SDPAudioVideoMediaFormat> VideoOfferFormats = new List<SDPAudioVideoMediaFormat> { 
+            new SDPAudioVideoMediaFormat(SDPMediaTypesEnum.video, 100, "VP9", 90000) 
+        };
 
         static async Task Main()
         {
             CancellationTokenSource exitCts = new CancellationTokenSource();
 
-            AddConsoleLogger();
+            logger = AddConsoleLogger();
 
             // Start web socket.
             Console.WriteLine("Starting web socket server...");
@@ -174,19 +168,24 @@ namespace SIPSorcery.Examples
         {
             var pc = new RTCPeerConnection(null);
 
+            pc.GetRtpChannel().OnStunMessageReceived += (msg, ep, isRelay) =>
+            {
+                bool hasUseCandidate = msg.Attributes.Any(x => x.AttributeType == STUNAttributeTypesEnum.UseCandidate);
+                Console.WriteLine($"STUN {msg.Header.MessageType} received from {ep}, use candidate {hasUseCandidate}.");
+            };
             pc.onicecandidateerror += (candidate, error) => logger.LogWarning($"Error adding remote ICE candidate. {error} {candidate}");
             pc.oniceconnectionstatechange += (state) => logger.LogDebug($"ICE connection state change to {state}.");
             //pc.OnReceiveReport += (type, rtcp) => logger.LogDebug($"RTCP {type} report received.");
             pc.OnRtcpBye += (reason) => logger.LogDebug($"RTCP BYE receive, reason: {(string.IsNullOrWhiteSpace(reason) ? "<none>" : reason)}.");
 
-            pc.onicecandidate += (candidate) =>
-            {
-                if (pc.signalingState == RTCSignalingState.have_local_offer ||
-                    pc.signalingState == RTCSignalingState.have_remote_offer)
-                {
-                    context.WebSocket.Send($"candidate:{candidate}");
-                }
-            };
+            //pc.onicecandidate += (candidate) =>
+            //{
+            //    if (pc.signalingState == RTCSignalingState.have_local_offer ||
+            //        pc.signalingState == RTCSignalingState.have_remote_offer)
+            //    {
+            //        context.WebSocket.Send($"candidate:{candidate}");
+            //    }
+            //};
 
             pc.onconnectionstatechange += (state) =>
             {
@@ -196,7 +195,7 @@ namespace SIPSorcery.Examples
                 {
                     logger.LogDebug("Creating RTP session for ffplay.");
 
-                    var rtpSession = CreateRtpSession(pc.AudioLocalTrack?.Capabilities, pc.VideoLocalTrack?.Capabilities);
+                    var rtpSession = CreateRtpSession(pc.AudioLocalTrack?.Capabilities,                       pc.VideoLocalTrack?.Capabilities);
                     pc.OnRtpPacketReceived += (rep, media, rtpPkt) =>
                     {
                         if (media == SDPMediaTypesEnum.audio && rtpSession.AudioDestinationEndPoint != null)
@@ -212,7 +211,6 @@ namespace SIPSorcery.Examples
                     };
                     pc.OnRtpClosed += (reason) => rtpSession.Close(reason);
                 }
-
             };
 
             _activePeerConnection = pc;
@@ -220,7 +218,7 @@ namespace SIPSorcery.Examples
             return pc;
         }
 
-        private static RTPSession CreateRtpSession(List<SDPMediaFormat> audioFormats, List<SDPMediaFormat> videoFormats)
+        private static RTPSession CreateRtpSession(List<SDPAudioVideoMediaFormat> audioFormats, List<SDPAudioVideoMediaFormat> videoFormats)
         {
             var rtpSession = new RTPSession(false, false, false, IPAddress.Loopback);
             bool hasAudio = false;
@@ -288,8 +286,7 @@ namespace SIPSorcery.Examples
 
                     foreach (var ann in remoteSdp.Media)
                     {
-                        var capbilities = FilterCodecs(ann.Media, ann.MediaFormats);
-                        MediaStreamTrack track = new MediaStreamTrack(ann.Media, false, capbilities, MediaStreamStatusEnum.RecvOnly);
+                        MediaStreamTrack track = new MediaStreamTrack(ann.Media, false, ann.MediaFormats.Values.ToList(), MediaStreamStatusEnum.RecvOnly);
                         pc.addTrack(track);
                     }
 
@@ -305,7 +302,11 @@ namespace SIPSorcery.Examples
                 else if (pc.remoteDescription == null)
                 {
                     logger.LogDebug("Answer SDP: " + message);
-                    pc.setRemoteDescription(new RTCSessionDescriptionInit { sdp = message, type = RTCSdpType.answer });
+                    var result = pc.setRemoteDescription(new RTCSessionDescriptionInit { sdp = message, type = RTCSdpType.answer });
+                    if(result != SetDescriptionResultEnum.OK)
+                    {
+                        logger.LogWarning($"Failed to set remote description {result}.");
+                    }
                 }
                 else
                 {
@@ -328,69 +329,19 @@ namespace SIPSorcery.Examples
             }
         }
 
-        private static List<SDPMediaFormat> FilterCodecs(SDPMediaTypesEnum mediaType, List<SDPMediaFormat> formats)
-        {
-            if (mediaType == SDPMediaTypesEnum.audio)
-            {
-                if (AudioFormatsFilter.Count == 0)
-                {
-                    return formats;
-                }
-                else
-                {
-                    var audioFormats = new List<SDPMediaFormat>();
-
-                    foreach (var format in formats)
-                    {
-                        if (AudioFormatsFilter.Any(x => x == format.FormatCodec))
-                        {
-                            audioFormats.Add(format);
-                        }
-                    }
-
-                    return audioFormats;
-                }
-            }
-            else if (mediaType == SDPMediaTypesEnum.video)
-            {
-                if (VideoFormatsFilter.Count == 0)
-                {
-                    return formats;
-                }
-                else
-                {
-                    var videoFormats = new List<SDPMediaFormat>();
-
-                    foreach (var format in formats)
-                    {
-                        if (VideoFormatsFilter.Any(x => x == format.FormatCodec))
-                        {
-                            videoFormats.Add(format);
-                        }
-                    }
-
-                    return videoFormats;
-                }
-            }
-            else
-            {
-                return formats;
-            }
-        }
-
         /// <summary>
-        ///  Adds a console logger. Can be omitted if internal SIPSorcery debug and warning messages are not required.
+        /// Adds a console logger. Can be omitted if internal SIPSorcery debug and warning messages are not required.
         /// </summary>
-        private static void AddConsoleLogger()
+        private static Microsoft.Extensions.Logging.ILogger AddConsoleLogger()
         {
-            var loggerFactory = new Microsoft.Extensions.Logging.LoggerFactory();
-            var loggerConfig = new LoggerConfiguration()
+            var serilogLogger = new LoggerConfiguration()
                 .Enrich.FromLogContext()
                 .MinimumLevel.Is(Serilog.Events.LogEventLevel.Debug)
                 .WriteTo.Console()
                 .CreateLogger();
-            loggerFactory.AddSerilog(loggerConfig);
-            SIPSorcery.Sys.Log.LoggerFactory = loggerFactory;
+            var factory = new SerilogLoggerFactory(serilogLogger);
+            SIPSorcery.LogFactory.Set(factory);
+            return factory.CreateLogger<Program>();
         }
     }
 }

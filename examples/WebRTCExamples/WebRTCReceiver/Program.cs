@@ -16,89 +16,77 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Imaging;
+using System.IO;
 using System.Linq;
 using System.Net;
+using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using CommandLine;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Serilog;
-using SIPSorcery.Media;
+using Serilog.Extensions.Logging;
 using SIPSorcery.Net;
 using SIPSorcery.Sys;
-using SIPSorceryMedia;
-using WebSocketSharp;
-using WebSocketSharp.Net.WebSockets;
+using SIPSorceryMedia.Abstractions.V1;
+using SIPSorceryMedia.Encoders;
 using WebSocketSharp.Server;
 
-namespace TestConsole
+namespace demo
 {
-    public class SDPExchange : WebSocketBehavior
+    public class Options
     {
-        public RTCPeerConnection PeerConnection;
+        [Option("cert", Required = false,
+            HelpText = "Path to a `.pfx` certificate archive for the web socket server listener. Format \"--cert=mycertificate.pfx.")]
+        public string WSSCertificate { get; set; }
 
-        public event Func<WebSocketContext, RTCPeerConnection> WebSocketOpened;
-        public event Action<WebSocketContext, RTCPeerConnection, string> OnMessageReceived;
+        [Option("ipv6", Required = false,
+            HelpText = "If set the web socket server will listen on IPv6 instead of IPv4.")]
+        public bool UseIPv6 { get; set; }
 
-        public SDPExchange()
-        { }
-
-        protected override void OnMessage(MessageEventArgs e)
-        {
-            OnMessageReceived(this.Context, PeerConnection, e.Data);
-        }
-
-        protected override void OnOpen()
-        {
-            base.OnOpen();
-            PeerConnection = WebSocketOpened(this.Context);
-        }
-
-        protected override void OnClose(CloseEventArgs e)
-        {
-            base.OnClose(e);
-            PeerConnection.Close("remote party close");
-        }
+        [Option("noaudio", Required = false,
+           HelpText = "If set the an audio track will not be included in the SDP offer.")]
+        public bool NoAudio { get; set; }
     }
 
     class Program
     {
-        private const string LOCALHOST_CERTIFICATE_PATH = "certs/localhost.pfx";
+        private const string STUN_URL = "stun:stun.sipsorcery.com";
         private const int WEBSOCKET_PORT = 8081;
+        private const int VIDEO_INITIAL_WIDTH = 640;
+        private const int VIDEO_INITIAL_HEIGHT = 480;
 
-        private static WebSocketServer _webSocketServer;
-        private static VpxEncoder _vpxEncoder;
-        private static ImageConvert _imgConverter;
-        private static byte[] _currVideoFrame = new byte[65536];
-        private static int _currVideoFramePosn = 0;
         private static Form _form;
         private static PictureBox _picBox;
+        private static Options _options;
 
-        [STAThread]
+        private static Microsoft.Extensions.Logging.ILogger logger = NullLogger.Instance;
+
         static void Main(string[] args)
         {
-            AddConsoleLogger();
+            Console.WriteLine("WebRTC Receive Demo");
 
-            _vpxEncoder = new VpxEncoder();
-            int res = _vpxEncoder.InitDecoder();
-            if (res != 0)
-            {
-                throw new ApplicationException("VPX decoder initialisation failed.");
-            }
+            logger = AddConsoleLogger();
 
-            _imgConverter = new ImageConvert();
+            var parseResult = Parser.Default.ParseArguments<Options>(args);
+            _options = (parseResult as Parsed<Options>)?.Value;
+            X509Certificate2 wssCertificate = (_options.WSSCertificate != null) ? LoadCertificate(_options.WSSCertificate) : null;
 
             // Start web socket.
             Console.WriteLine("Starting web socket server...");
-            _webSocketServer = new WebSocketServer(IPAddress.Any, WEBSOCKET_PORT, true);
-            _webSocketServer.SslConfiguration.ServerCertificate = new System.Security.Cryptography.X509Certificates.X509Certificate2(LOCALHOST_CERTIFICATE_PATH);
-            _webSocketServer.SslConfiguration.CheckCertificateRevocation = false;
-            _webSocketServer.AddWebSocketService<SDPExchange>("/", (sdpExchanger) =>
+            var webSocketServer = new WebSocketServer((_options.UseIPv6) ? IPAddress.IPv6Any : IPAddress.Any, WEBSOCKET_PORT, wssCertificate != null);
+            if (webSocketServer.IsSecure)
             {
-                sdpExchanger.WebSocketOpened += WebSocketOpened;
-                sdpExchanger.OnMessageReceived += WebSocketMessageReceived;
-            });
-            _webSocketServer.Start();
+                webSocketServer.SslConfiguration.ServerCertificate = wssCertificate;
+                webSocketServer.SslConfiguration.CheckCertificateRevocation = false;
+                webSocketServer.SslConfiguration.EnabledSslProtocols = System.Security.Authentication.SslProtocols.Tls12;
+            }
+            webSocketServer.AddWebSocketService<WebRTCWebSocketPeer>("/", (peer) => peer.CreatePeerConnection = CreatePeerConnection);
+            webSocketServer.Start();
 
-            Console.WriteLine($"Waiting for browser web socket connection to {_webSocketServer.Address}:{_webSocketServer.Port}...");
+            Console.WriteLine($"Waiting for web socket connections on {(webSocketServer.IsSecure ? "wss" : "ws")}://{webSocketServer.Address}:{webSocketServer.Port}...");
 
             // Open a Window to display the video feed from the WebRTC peer.
             _form = new Form();
@@ -106,7 +94,7 @@ namespace TestConsole
             _form.BackgroundImageLayout = ImageLayout.Center;
             _picBox = new PictureBox
             {
-                Size = new Size(640, 480),
+                Size = new Size(VIDEO_INITIAL_WIDTH, VIDEO_INITIAL_HEIGHT),
                 Location = new Point(0, 0),
                 Visible = true
             };
@@ -116,218 +104,113 @@ namespace TestConsole
             Application.Run(_form);
         }
 
-        private static RTCPeerConnection WebSocketOpened(WebSocketContext context)
+        private static Task<RTCPeerConnection> CreatePeerConnection()
         {
-            var peerConnection = new RTCPeerConnection(null);
+            var videoEP = new SIPSorceryMedia.Windows.WindowsVideoEndPoint(new VpxVideoEncoder());
+            videoEP.RestrictFormats(format => format.Codec == VideoCodecsEnum.VP8);
 
-            // Add local recvonly tracks. This ensures that the SDP answer includes only
-            // the codecs we support.
-            MediaStreamTrack audioTrack = new MediaStreamTrack(SDPMediaTypesEnum.audio, false, new List<SDPMediaFormat> { new SDPMediaFormat(SDPMediaFormatsEnum.PCMU) }, MediaStreamStatusEnum.RecvOnly);
-            peerConnection.addTrack(audioTrack);
-            MediaStreamTrack videoTrack = new MediaStreamTrack(SDPMediaTypesEnum.video, false, new List<SDPMediaFormat> { new SDPMediaFormat(SDPMediaFormatsEnum.VP8) }, MediaStreamStatusEnum.RecvOnly);
-            peerConnection.addTrack(videoTrack);
-
-            peerConnection.OnReceiveReport += RtpSession_OnReceiveReport;
-            peerConnection.OnSendReport += RtpSession_OnSendReport;
-            peerConnection.oniceconnectionstatechange += (state) => Console.WriteLine($"ICE connection state changed to {state}.");
-            peerConnection.onconnectionstatechange += (state) =>
+            videoEP.OnVideoSinkDecodedSample += (byte[] bmp, uint width, uint height, int stride, VideoPixelFormatsEnum pixelFormat) =>
             {
-                Console.WriteLine($"Peer connection state changed to {state}.");
+                _form.BeginInvoke(new Action(() =>
+                {
+                    unsafe
+                    {
+                        if(_picBox.Width != (int)width || _picBox.Height != (int)height)
+                        {
+                           logger.LogDebug($"Adjusting video display from {_picBox.Width}x{_picBox.Height} to {width}x{height}.");
+                            _picBox.Width = (int)width;
+                            _picBox.Height = (int)height;
+                        }
 
-                if (state == RTCPeerConnectionState.closed)
+                        fixed (byte* s = bmp)
+                        {
+                            Bitmap bmpImage = new Bitmap((int)width, (int)height, (int)(bmp.Length / height), PixelFormat.Format24bppRgb, (IntPtr)s);
+                            _picBox.Image = bmpImage;
+                        }
+                    }
+                }));
+            };
+
+            RTCConfiguration config = new RTCConfiguration
+            {
+                //iceServers = new List<RTCIceServer> { new RTCIceServer { urls = STUN_URL } }
+                 X_UseRtpFeedbackProfile = true
+            };
+            var pc = new RTCPeerConnection(config);
+
+            // Add local receive only tracks. This ensures that the SDP answer includes only the codecs we support.
+            if (!_options.NoAudio)
+            {
+                MediaStreamTrack audioTrack = new MediaStreamTrack(SDPMediaTypesEnum.audio, false,
+                    new List<SDPAudioVideoMediaFormat> { new SDPAudioVideoMediaFormat(SDPWellKnownMediaFormatsEnum.PCMU) }, MediaStreamStatusEnum.RecvOnly);
+                pc.addTrack(audioTrack);
+            }
+            MediaStreamTrack videoTrack = new MediaStreamTrack(videoEP.GetVideoSinkFormats(), MediaStreamStatusEnum.RecvOnly);
+            //MediaStreamTrack videoTrack = new MediaStreamTrack(new VideoFormat(96, "VP8", 90000, "x-google-max-bitrate=5000000"), MediaStreamStatusEnum.RecvOnly);
+            pc.addTrack(videoTrack);
+
+            pc.OnVideoFrameReceived += videoEP.GotVideoFrame;
+            pc.OnVideoFormatsNegotiated += (formats) => videoEP.SetVideoSinkFormat(formats.First());
+
+            pc.onconnectionstatechange += async (state) =>
+            {
+                logger.LogDebug($"Peer connection state change to {state}.");
+
+                if (state == RTCPeerConnectionState.failed)
                 {
-                    peerConnection.OnRtpPacketReceived -= RtpSession_OnRtpPacketReceived;
+                    pc.Close("ice disconnection");
                 }
-                else if(state == RTCPeerConnectionState.connected)
+                else if (state == RTCPeerConnectionState.closed)
                 {
-                    peerConnection.OnRtpPacketReceived += RtpSession_OnRtpPacketReceived;
+                    await videoEP.CloseVideo();
                 }
             };
 
-            return peerConnection;
+            // Diagnostics.
+            //pc.OnReceiveReport += (re, media, rr) => logger.LogDebug($"RTCP Receive for {media} from {re}\n{rr.GetDebugSummary()}");
+            pc.OnSendReport += (media, sr) => logger.LogDebug($"RTCP Send for {media}\n{sr.GetDebugSummary()}");
+            //pc.GetRtpChannel().OnStunMessageReceived += (msg, ep, isRelay) => logger.LogDebug($"RECV STUN {msg.Header.MessageType} (txid: {msg.Header.TransactionId.HexStr()}) from {ep}.");
+            //pc.GetRtpChannel().OnStunMessageSent += (msg, ep, isRelay) => logger.LogDebug($"SEND STUN {msg.Header.MessageType} (txid: {msg.Header.TransactionId.HexStr()}) to {ep}.");
+            pc.oniceconnectionstatechange += (state) => logger.LogDebug($"ICE connection state change to {state}.");
+
+            return Task.FromResult(pc);
         }
 
-        private static async void WebSocketMessageReceived(WebSocketContext context, RTCPeerConnection peerConnection, string msg)
+        private static X509Certificate2 LoadCertificate(string path)
         {
-            if (peerConnection.RemoteDescription != null)
+            if (!File.Exists(path))
             {
-                Console.WriteLine($"ICE Candidate: {msg}.");
-                //await _peerConnections[0].addIceCandidate(new RTCIceCandidateInit { candidate = msg });
-
-                //  await peerConnection.addIceCandidate(new RTCIceCandidateInit { candidate = msg });
-                Console.WriteLine("add ICE candidate complete.");
+                logger.LogWarning($"No certificate file could be found at {path}.");
+                return null;
             }
             else
             {
-                //Console.WriteLine($"websocket recv: {msg}");
-                //var offerSDP = SDP.ParseSDPDescription(msg);
-                Console.WriteLine($"offer sdp: {msg}");
-
-                peerConnection.setRemoteDescription(new RTCSessionDescriptionInit { sdp = msg, type = RTCSdpType.offer });
-
-                var answerInit = peerConnection.createAnswer(null);
-                await peerConnection.setLocalDescription(answerInit);
-
-                Console.WriteLine($"answer sdp: {answerInit.sdp}");
-
-                context.WebSocket.Send(answerInit.sdp);
-            }
-        }
-
-        private static void RtpSession_OnRtpPacketReceived(IPEndPoint remoteEndPoint, SDPMediaTypesEnum mediaType, RTPPacket rtpPacket)
-        {
-            if (mediaType == SDPMediaTypesEnum.audio)
-            {
-                //Console.WriteLine($"rtp audio, seqnum {rtpPacket.Header.SequenceNumber}, payload type {rtpPacket.Header.PayloadType}, marker {rtpPacket.Header.MarkerBit}.");
-            }
-            else if (mediaType == SDPMediaTypesEnum.video)
-            {
-                //Console.WriteLine($"rtp video, seqnum {rtpPacket.Header.SequenceNumber}, ts {rtpPacket.Header.Timestamp}, marker {rtpPacket.Header.MarkerBit}, payload {rtpPacket.Payload.Length}, payload[0-5] {rtpPacket.Payload.HexStr(5)}.");
-
-                // New frames must have the VP8 Payload Descriptor Start bit set.
-                // The tracking of the current video frame position is to deal with a VP8 frame being split across multiple RTP packets
-                // as per https://tools.ietf.org/html/rfc7741#section-4.4.
-                if (_currVideoFramePosn > 0 || (rtpPacket.Payload[0] & 0x10) > 0)
+                X509Certificate2 cert = new X509Certificate2(path, "", X509KeyStorageFlags.Exportable);
+                if (cert == null)
                 {
-                    RtpVP8Header vp8Header = RtpVP8Header.GetVP8Header(rtpPacket.Payload);
-
-                    Buffer.BlockCopy(rtpPacket.Payload, vp8Header.Length, _currVideoFrame, _currVideoFramePosn, rtpPacket.Payload.Length - vp8Header.Length);
-                    _currVideoFramePosn += rtpPacket.Payload.Length - vp8Header.Length;
-
-                    if (rtpPacket.Header.MarkerBit == 1)
-                    {
-                        unsafe
-                        {
-                            fixed (byte* p = _currVideoFrame)
-                            {
-                                uint width = 0, height = 0;
-                                byte[] i420 = null;
-
-                                //Console.WriteLine($"Attempting vpx decode {_currVideoFramePosn} bytes.");
-
-                                int decodeResult = _vpxEncoder.Decode(p, _currVideoFramePosn, ref i420, ref width, ref height);
-
-                                if (decodeResult != 0)
-                                {
-                                    Console.WriteLine("VPX decode of video sample failed.");
-                                }
-                                else
-                                {
-                                    //Console.WriteLine($"Video frame ready {width}x{height}.");
-
-                                    fixed (byte* r = i420)
-                                    {
-                                        byte[] bmp = null;
-                                        int stride = 0;
-                                        int convRes = _imgConverter.ConvertYUVToRGB(r, VideoSubTypesEnum.I420, (int)width, (int)height, VideoSubTypesEnum.BGR24, ref bmp, ref stride);
-
-                                        if (convRes == 0)
-                                        {
-                                            _form.BeginInvoke(new Action(() =>
-                                            {
-                                                fixed (byte* s = bmp)
-                                                {
-                                                    System.Drawing.Bitmap bmpImage = new System.Drawing.Bitmap((int)width, (int)height, stride, System.Drawing.Imaging.PixelFormat.Format24bppRgb, (IntPtr)s);
-                                                    _picBox.Image = bmpImage;
-                                                }
-                                            }));
-                                        }
-                                        else
-                                        {
-                                            Console.WriteLine("Pixel format conversion of decoded sample failed.");
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        _currVideoFramePosn = 0;
-                    }
+                    logger.LogWarning($"Failed to load X509 certificate from file {path}.");
                 }
                 else
                 {
-                    Console.WriteLine("Discarding RTP packet, VP8 header Start bit not set.");
-                    Console.WriteLine($"rtp video, seqnum {rtpPacket.Header.SequenceNumber}, ts {rtpPacket.Header.Timestamp}, marker {rtpPacket.Header.MarkerBit}, payload {rtpPacket.Payload.Length}, payload[0-5] {rtpPacket.Payload.HexStr(5)}.");
+                    logger.LogInformation($"Certificate file successfully loaded {cert.Subject}, thumbprint {cert.Thumbprint}, has private key {cert.HasPrivateKey}.");
                 }
+                return cert;
             }
         }
 
         /// <summary>
-        /// Diagnostic handler to print out our RTCP sender/receiver reports.
+        /// Adds a console logger. Can be omitted if internal SIPSorcery debug and warning messages are not required.
         /// </summary>
-        private static void RtpSession_OnSendReport(SDPMediaTypesEnum mediaType, RTCPCompoundPacket sentRtcpReport)
+        private static Microsoft.Extensions.Logging.ILogger AddConsoleLogger()
         {
-            if (sentRtcpReport.SenderReport != null)
-            {
-                var sr = sentRtcpReport.SenderReport;
-                Console.WriteLine($"RTCP sent SR {mediaType}, ssrc {sr.SSRC}, pkts {sr.PacketCount}, bytes {sr.OctetCount}.");
-            }
-            else
-            {
-                var rrSample = sentRtcpReport.ReceiverReport.ReceptionReports.First();
-                Console.WriteLine($"RTCP sent RR {mediaType}, ssrc {rrSample.SSRC}, seqnum {rrSample.ExtendedHighestSequenceNumber}.");
-            }
-        }
-
-        /// <summary>
-        /// Diagnostic handler to print out our RTCP reports from the remote WebRTC peer.
-        /// </summary>
-        private static void RtpSession_OnReceiveReport(IPEndPoint remoteEndPoint, SDPMediaTypesEnum mediaType, RTCPCompoundPacket report)
-        {
-            //var rr = recvRtcpReport.ReceiverReport.ReceptionReports.FirstOrDefault();
-            //if (rr != null)
-            //{
-            //    Console.WriteLine($"RTCP {mediaType} Receiver Report: SSRC {rr.SSRC}, pkts lost {rr.PacketsLost}, delay since SR {rr.DelaySinceLastSenderReport}.");
-            //}
-            //else
-            //{
-            //    Console.WriteLine($"RTCP {mediaType} Receiver Report: empty.");
-            //}
-
-            ReceptionReportSample rrs = null;
-            string cname = null;
-
-            if (report.SDesReport != null)
-            {
-                cname = report.SDesReport.CNAME;
-            }
-
-            if (report.SenderReport != null)
-            {
-                var sr = report.SenderReport;
-                rrs = report.SenderReport.ReceptionReports.FirstOrDefault();
-                Console.WriteLine($"RTCP recv SR {mediaType}, ssrc {sr.SSRC}, packets sent {sr.PacketCount}, bytes sent {sr.OctetCount}, (cname={cname}).");
-            }
-
-            if (report.ReceiverReport != null)
-            {
-                rrs = report.ReceiverReport.ReceptionReports.FirstOrDefault();
-            }
-
-            if (rrs != null)
-            {
-                Console.WriteLine($"RTCP recv RR {mediaType}, ssrc {rrs.SSRC}, pkts lost {rrs.PacketsLost}, delay since SR {rrs.DelaySinceLastSenderReport}, (cname={cname}).");
-            }
-
-            if (report.Bye != null)
-            {
-                Console.WriteLine($"RTCP recv BYE {mediaType}, reason {report.Bye.Reason}, (cname={cname}).");
-            }
-        }
-
-        /// <summary>
-        ///  Adds a console logger. Can be omitted if internal SIPSorcery debug and warning messages are not required.
-        /// </summary>
-        private static void AddConsoleLogger()
-        {
-            var loggerFactory = new Microsoft.Extensions.Logging.LoggerFactory();
-            var loggerConfig = new LoggerConfiguration()
+            var serilogLogger = new LoggerConfiguration()
                 .Enrich.FromLogContext()
                 .MinimumLevel.Is(Serilog.Events.LogEventLevel.Debug)
                 .WriteTo.Console()
                 .CreateLogger();
-            loggerFactory.AddSerilog(loggerConfig);
-            SIPSorcery.Sys.Log.LoggerFactory = loggerFactory;
+            var factory = new SerilogLoggerFactory(serilogLogger);
+            SIPSorcery.LogFactory.Set(factory);
+            return factory.CreateLogger<Program>();
         }
     }
 }

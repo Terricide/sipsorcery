@@ -16,110 +16,97 @@
 
 using System;
 using System.Collections.Generic;
-using System.Drawing;
-using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
 using System.Linq;
 using System.Net;
-using System.Runtime.InteropServices;
+using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
+using CommandLine;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Serilog;
+using Serilog.Extensions.Logging;
 using SIPSorcery.Net;
-using SIPSorceryMedia;
-using WebSocketSharp;
-using WebSocketSharp.Net.WebSockets;
+using SIPSorcery.Media;
+using SIPSorceryMedia.Abstractions.V1;
+using SIPSorceryMedia.FFmpeg;
 using WebSocketSharp.Server;
 
-namespace WebRTCServer
+namespace demo
 {
-    public class SDPExchange : WebSocketBehavior
+    public class Options
     {
-        public RTCPeerConnection PeerConnection;
-
-        public event Func<WebSocketContext, Task<RTCPeerConnection>> WebSocketOpened;
-        public event Action<RTCPeerConnection, string> OnMessageReceived;
-
-        public SDPExchange()
-        { }
-
-        protected override void OnMessage(MessageEventArgs e)
-        {
-            OnMessageReceived(PeerConnection, e.Data);
-        }
-
-        protected override async void OnOpen()
-        {
-            base.OnOpen();
-            PeerConnection = await WebSocketOpened(this.Context);
-        }
-
-        protected override void OnClose(CloseEventArgs e)
-        {
-            base.OnClose(e);
-            PeerConnection.Close("remote party close");
-        }
+        [Option("nodedss", Required = false,
+            HelpText = "Address and ID's for a node-dss simple signalling server to exchange SDP and ice candidates. Format \"--nodedss=http://127.0.0.1:3000;myid;theirid\".")]
+        public string NodeDssServer { get; set; }
     }
 
     class Program
     {
-        private static string TEST_PATTERN_IMAGE_PATH = "media/testpattern.jpeg";
-        private const int TEST_PATTERN_SPACING_MILLISECONDS = 33;
-        private const float TEXT_SIZE_PERCENTAGE = 0.035f;       // height of text as a percentage of the total image height
-        private const float TEXT_OUTLINE_REL_THICKNESS = 0.02f; // Black text outline thickness is set as a percentage of text height in pixels
-        private const int TEXT_MARGIN_PIXELS = 5;
-        private const int POINTS_PER_INCH = 72;
-        private const int VP8_TIMESTAMP_SPACING = 3000;
-        private const int VP8_PAYLOAD_TYPE_ID = 100;
-        private const string LOCALHOST_CERTIFICATE_PATH = "certs/localhost.pfx";
         private const int WEBSOCKET_PORT = 8081;
+        private const string STUN_URL = "stun:stun.sipsorcery.com";
 
-        private static Microsoft.Extensions.Logging.ILogger logger = SIPSorcery.Sys.Log.Logger;
+        private static Microsoft.Extensions.Logging.ILogger logger = NullLogger.Instance;
 
-        private static WebSocketServer _webSocketServer;
-        private static SIPSorceryMedia.VpxEncoder _vpxEncoder;
-        private static SIPSorceryMedia.ImageConvert _colorConverter;
-        private static Bitmap _testPattern;
-        private static int _stride;
-        private static Timer _sendTestPatternTimer;
+        private static int _frameCount = 0;
+        private static DateTime _startTime;
 
-        private static event Action<SDPMediaTypesEnum, uint, byte[]> OnTestPatternSampleReady;
-
-        static void Main()
+        static async Task Main(string[] args)
         {
-            Console.WriteLine("WebRTC Server Sample Program");
-            Console.WriteLine("Press ctrl-c to exit.");
+            Console.WriteLine("WebRTC Test Pattern Server Demo");
 
-            // Plumbing code to facilitate a graceful exit.
-            CancellationTokenSource exitCts = new CancellationTokenSource(); // Cancellation token to stop the SIP transport and RTP stream.
-            ManualResetEvent exitMre = new ManualResetEvent(false);
+            logger = AddConsoleLogger();
 
-            AddConsoleLogger();
+            CancellationTokenSource cts = new CancellationTokenSource();
 
-            InitialiseTestPattern();
+            var parseResult = Parser.Default.ParseArguments<Options>(args);
+            var options = (parseResult as Parsed<Options>)?.Value;
 
-            // Start web socket.
-            Console.WriteLine("Starting web socket server...");
-            _webSocketServer = new WebSocketServer(IPAddress.Any, WEBSOCKET_PORT);
-            //_webSocketServer = new WebSocketServer(IPAddress.Any, WEBSOCKET_PORT, true);
-            //_webSocketServer.SslConfiguration.ServerCertificate = new System.Security.Cryptography.X509Certificates.X509Certificate2(LOCALHOST_CERTIFICATE_PATH);
-            //_webSocketServer.SslConfiguration.CheckCertificateRevocation = false;
-            //_webSocketServer.Log.Level = WebSocketSharp.LogLevel.Debug;
-            _webSocketServer.AddWebSocketService<SDPExchange>("/", (sdpExchanger) =>
+            //X509Certificate2 cert = new X509Certificate2("localhost.pfx", "", X509KeyStorageFlags.Exportable);
+            //if (cert == null)
+            //{
+            //    Console.WriteLine("Could not load certificate file.");
+            //}
+            //else
+            //{
+            //    Console.WriteLine($"Certificate file successfully loaded {cert.Thumbprint}, have private key {cert.HasPrivateKey}.");
+            //}
+            X509Certificate2 cert = null;
+
+            if (options?.NodeDssServer == null)
             {
-                sdpExchanger.WebSocketOpened += SendSDPOffer;
-                sdpExchanger.OnMessageReceived += WebSocketMessageReceived;
-            });
-            _webSocketServer.Start();
+                // Start web socket.
+                Console.WriteLine("Starting web socket server...");
+                var webSocketServer = new WebSocketServer(IPAddress.Any, WEBSOCKET_PORT);
+                webSocketServer.AddWebSocketService<WebRTCWebSocketPeer>("/", (peer) => peer.CreatePeerConnection = () => CreatePeerConnection(cert));
+                webSocketServer.Start();
 
-            Console.WriteLine($"Waiting for browser web socket connection to {_webSocketServer.Address}:{_webSocketServer.Port}...");
+                Console.WriteLine($"Waiting for web socket connections on {webSocketServer.Address}:{webSocketServer.Port}...");
+                Console.WriteLine("Press ctrl-c to exit.");
+            }
+            else
+            {
+                string[] fields = options.NodeDssServer.Split(';');
+                if (fields.Length < 3)
+                {
+                    throw new ArgumentException("The 'nodedss' option must contain 3 semi-colon separated fields, e.g. --nodedss=http://127.0.0.1:3000;myid;theirid.");
+                }
+
+                Console.WriteLine($"Sending offer to node dss server at {fields[0]}, our ID={fields[1]}, their ID={fields[2]}.");
+
+                var nodeDssPeer = new WebRTCNodeDssPeer(fields[0], fields[1], fields[2], () => CreatePeerConnection(cert));
+                await nodeDssPeer.Start(cts);
+
+                Console.WriteLine($"Waiting for node DSS peer to connect...");
+                Console.WriteLine("Press ctrl-c to exit.");
+            }
 
             // Ctrl-c will gracefully exit the call at any point.
+            ManualResetEvent exitMre = new ManualResetEvent(false);
             Console.CancelKeyPress += delegate (object sender, ConsoleCancelEventArgs e)
             {
                 e.Cancel = true;
-                _sendTestPatternTimer?.Dispose();
+                cts.Cancel();
                 exitMre.Set();
             };
 
@@ -127,272 +114,102 @@ namespace WebRTCServer
             exitMre.WaitOne();
         }
 
-        private static async Task<RTCPeerConnection> SendSDPOffer(WebSocketContext context)
+        private static Task<RTCPeerConnection> CreatePeerConnection(X509Certificate2 cert)
         {
-            logger.LogDebug($"Web socket client connection from {context.UserEndPoint}.");
-
+            //RTCConfiguration config = new RTCConfiguration
+            //{
+            //    iceServers = new List<RTCIceServer> { new RTCIceServer { urls = STUN_URL } },
+            //    certificates = new List<RTCCertificate> { new RTCCertificate { Certificate = cert } }
+            //};
+            //var pc = new RTCPeerConnection(config);
             var pc = new RTCPeerConnection(null);
 
-            MediaStreamTrack videoTrack = new MediaStreamTrack(SDPMediaTypesEnum.video, false, new List<SDPMediaFormat> { new SDPMediaFormat(SDPMediaFormatsEnum.VP8) }, MediaStreamStatusEnum.SendOnly);
-            pc.addTrack(videoTrack);
+            //var testPatternSource = new VideoTestPatternSource(new SIPSorceryMedia.Encoders.VideoEncoder());
+            var testPatternSource = new VideoTestPatternSource(new FFmpegVideoEncoder());
+            testPatternSource.SetFrameRate(60);
+            //testPatternSource.SetMaxFrameRate(true);
+            //var videoEndPoint = new SIPSorceryMedia.FFmpeg.FFmpegVideoEndPoint();
+            //videoEndPoint.RestrictFormats(format => format.Codec == VideoCodecsEnum.H264);
+            testPatternSource.RestrictFormats(format => format.Codec == VideoCodecsEnum.H264);
+            //var videoEndPoint = new SIPSorceryMedia.Windows.WindowsEncoderEndPoint();
+            //var videoEndPoint = new SIPSorceryMedia.Encoders.VideoEncoderEndPoint();
 
-            pc.OnReceiveReport += RtpSession_OnReceiveReport;
-            pc.OnSendReport += RtpSession_OnSendReport;
-            pc.OnTimeout += (mediaType) => pc.Close("remote timeout");
-            pc.oniceconnectionstatechange += (state) => logger.LogDebug($"ICE connection state change to {state}.");
+            MediaStreamTrack track = new MediaStreamTrack(testPatternSource.GetVideoSourceFormats(), MediaStreamStatusEnum.SendOnly);
+            pc.addTrack(track);
 
-            pc.onconnectionstatechange += (state) =>
+            //testPatternSource.OnVideoSourceRawSample += videoEndPoint.ExternalVideoSourceRawSample;
+            testPatternSource.OnVideoSourceRawSample += MesasureTestPatternSourceFrameRate;
+            testPatternSource.OnVideoSourceEncodedSample += pc.SendVideo;
+            pc.OnVideoFormatsNegotiated += (formats) => testPatternSource.SetVideoSourceFormat(formats.First());
+            
+            pc.onconnectionstatechange += async (state) =>
             {
                 logger.LogDebug($"Peer connection state change to {state}.");
 
-                if(state == RTCPeerConnectionState.disconnected || state == RTCPeerConnectionState.failed)
+                if (state == RTCPeerConnectionState.failed)
                 {
-                    pc.Close("remote disconnection");
+                    pc.Close("ice disconnection");
                 }
-
-                if (state == RTCPeerConnectionState.closed)
+                else if (state == RTCPeerConnectionState.closed)
                 {
-                    OnTestPatternSampleReady -= pc.SendMedia;
-                    pc.OnReceiveReport -= RtpSession_OnReceiveReport;
-                    pc.OnSendReport -= RtpSession_OnSendReport;
-                    _sendTestPatternTimer?.Dispose();
+                    await testPatternSource.CloseVideo();
+                    await testPatternSource.CloseVideo();
+                    testPatternSource.Dispose();
                 }
                 else if (state == RTCPeerConnectionState.connected)
                 {
-                    OnTestPatternSampleReady += pc.SendMedia;
-
-                    if (_sendTestPatternTimer == null)
-                    {
-                        _sendTestPatternTimer = new Timer(SendTestPattern, null, 0, TEST_PATTERN_SPACING_MILLISECONDS);
-                    }
+                    await testPatternSource.StartVideo();
+                    await testPatternSource.StartVideo();
                 }
             };
 
-            var offerSdp = pc.createOffer(null);
-            await pc.setLocalDescription(offerSdp);
+            // Diagnostics.
+            //pc.OnReceiveReport += (re, media, rr) => logger.LogDebug($"RTCP Receive for {media} from {re}\n{rr.GetDebugSummary()}");
+            //pc.OnSendReport += (media, sr) => logger.LogDebug($"RTCP Send for {media}\n{sr.GetDebugSummary()}");
+            //pc.GetRtpChannel().OnStunMessageReceived += (msg, ep, isRelay) => logger.LogDebug($"STUN {msg.Header.MessageType} received from {ep}.");
+            pc.oniceconnectionstatechange += (state) => logger.LogDebug($"ICE connection state change to {state}.");
+            pc.onsignalingstatechange += () =>
+            {
+                if(pc.signalingState == RTCSignalingState.have_remote_offer)
+                {
+                    logger.LogDebug(pc.RemoteDescription.ToString());
+                }
+            };
 
-            logger.LogDebug($"Sending SDP offer to client {context.UserEndPoint}.");
-            logger.LogDebug(offerSdp.sdp);
-
-            context.WebSocket.Send(offerSdp.sdp);
-
-            return pc;
+            return Task.FromResult(pc);
         }
 
-        private static void WebSocketMessageReceived(RTCPeerConnection pc, string message)
+        private static void MesasureTestPatternSourceFrameRate(uint durationMilliseconds, int width, int height, byte[] sample, SIPSorceryMedia.Abstractions.V1.VideoPixelFormatsEnum pixelFormat)
         {
-            try
+            if(_startTime == DateTime.MinValue)
             {
-                if (pc.remoteDescription == null)
-                {
-                    logger.LogDebug("Answer SDP: " + message);
-                    pc.setRemoteDescription(new RTCSessionDescriptionInit { sdp = message, type = RTCSdpType.answer });
-                }
-                else
-                {
-                    logger.LogDebug("ICE Candidate: " + message);
-                    pc.addIceCandidate(new RTCIceCandidateInit { candidate = message });
-                }
+                _startTime = DateTime.Now;
             }
-            catch (Exception excp)
+
+            _frameCount++;
+
+            if (DateTime.Now.Subtract(_startTime).TotalSeconds > 5)
             {
-                logger.LogError("Exception WebSocketMessageReceived. " + excp.Message);
-            }
-        }
-
-        private static void InitialiseTestPattern()
-        {
-            _testPattern = new Bitmap(TEST_PATTERN_IMAGE_PATH);
-
-            // Get the stride.
-            Rectangle rect = new Rectangle(0, 0, _testPattern.Width, _testPattern.Height);
-            System.Drawing.Imaging.BitmapData bmpData =
-                _testPattern.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadWrite,
-                _testPattern.PixelFormat);
-
-            // Get the address of the first line.
-            _stride = bmpData.Stride;
-
-            _testPattern.UnlockBits(bmpData);
-
-            // Initialise the video codec and color converter.
-            _vpxEncoder = new VpxEncoder();
-            _vpxEncoder.InitEncoder((uint)_testPattern.Width, (uint)_testPattern.Height, (uint)_stride);
-
-            _colorConverter = new ImageConvert();
-        }
-
-        private static void SendTestPattern(object state)
-        {
-            try
-            {
-                lock (_sendTestPatternTimer)
-                {
-                    unsafe
-                    {
-                        byte[] sampleBuffer = null;
-                        byte[] encodedBuffer = null;
-
-                        if (OnTestPatternSampleReady != null)
-                        {
-                            var stampedTestPattern = _testPattern.Clone() as System.Drawing.Image;
-                            AddTimeStampAndLocation(stampedTestPattern, DateTime.UtcNow.ToString("dd MMM yyyy HH:mm:ss:fff"), "Test Pattern");
-                            sampleBuffer = BitmapToRGB24(stampedTestPattern as System.Drawing.Bitmap);
-
-                            fixed (byte* p = sampleBuffer)
-                            {
-                                byte[] convertedFrame = null;
-                                _colorConverter.ConvertRGBtoYUV(p, VideoSubTypesEnum.BGR24, _testPattern.Width, _testPattern.Height, _stride, VideoSubTypesEnum.I420, ref convertedFrame);
-
-                                fixed (byte* q = convertedFrame)
-                                {
-                                    int encodeResult = _vpxEncoder.Encode(q, convertedFrame.Length, 1, ref encodedBuffer);
-
-                                    if (encodeResult != 0)
-                                    {
-                                        logger.LogWarning("VPX encode of video sample failed.");
-                                    }
-                                }
-                            }
-
-                            stampedTestPattern.Dispose();
-                            stampedTestPattern = null;
-
-                            OnTestPatternSampleReady?.Invoke(SDPMediaTypesEnum.video, VP8_TIMESTAMP_SPACING, encodedBuffer);
-
-                            encodedBuffer = null;
-                        }
-                        else
-                        {
-                            _sendTestPatternTimer?.Dispose();
-                            _sendTestPatternTimer = null;
-                        }
-                    }
-                }
-            }
-            catch (Exception excp)
-            {
-                logger.LogError("Exception SendTestPattern. " + excp);
-            }
-        }
-
-        private static byte[] BitmapToRGB24(Bitmap bitmap)
-        {
-            try
-            {
-                BitmapData bitmapData = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height), ImageLockMode.ReadWrite, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
-                var length = bitmapData.Stride * bitmapData.Height;
-
-                byte[] bytes = new byte[length];
-
-                // Copy bitmap to byte[]
-                Marshal.Copy(bitmapData.Scan0, bytes, 0, length);
-                bitmap.UnlockBits(bitmapData);
-
-                return bytes;
-            }
-            catch (Exception)
-            {
-                return new byte[] { };
-            }
-        }
-
-        private static void AddTimeStampAndLocation(System.Drawing.Image image, string timeStamp, string locationText)
-        {
-            int pixelHeight = (int)(image.Height * TEXT_SIZE_PERCENTAGE);
-
-            Graphics g = Graphics.FromImage(image);
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-
-            using (StringFormat format = new StringFormat())
-            {
-                format.LineAlignment = StringAlignment.Center;
-                format.Alignment = StringAlignment.Center;
-
-                using (Font f = new Font("Tahoma", pixelHeight, GraphicsUnit.Pixel))
-                {
-                    using (var gPath = new GraphicsPath())
-                    {
-                        float emSize = g.DpiY * f.Size / POINTS_PER_INCH;
-                        if (locationText != null)
-                        {
-                            gPath.AddString(locationText, f.FontFamily, (int)FontStyle.Bold, emSize, new Rectangle(0, TEXT_MARGIN_PIXELS, image.Width, pixelHeight), format);
-                        }
-
-                        gPath.AddString(timeStamp /* + " -- " + fps.ToString("0.00") + " fps" */, f.FontFamily, (int)FontStyle.Bold, emSize, new Rectangle(0, image.Height - (pixelHeight + TEXT_MARGIN_PIXELS), image.Width, pixelHeight), format);
-                        g.FillPath(Brushes.White, gPath);
-                        g.DrawPath(new Pen(Brushes.Black, pixelHeight * TEXT_OUTLINE_REL_THICKNESS), gPath);
-                    }
-                }
-            }
-        }
-
-        /// <summary>
-        /// Diagnostic handler to print out our RTCP sender/receiver reports.
-        /// </summary>
-        private static void RtpSession_OnSendReport(SDPMediaTypesEnum mediaType, RTCPCompoundPacket sentRtcpReport)
-        {
-            if (sentRtcpReport.Bye != null)
-            {
-                logger.LogDebug($"RTCP sent BYE {mediaType}.");
-            }
-            else if (sentRtcpReport.SenderReport != null)
-            {
-                var sr = sentRtcpReport.SenderReport;
-                logger.LogDebug($"RTCP sent SR {mediaType}, ssrc {sr.SSRC}, pkts {sr.PacketCount}, bytes {sr.OctetCount}.");
-            }
-            else
-            {
-                if (sentRtcpReport.ReceiverReport.ReceptionReports?.Count > 0)
-                {
-                    var rrSample = sentRtcpReport.ReceiverReport.ReceptionReports.First();
-                    logger.LogDebug($"RTCP sent RR {mediaType}, ssrc {rrSample.SSRC}, seqnum {rrSample.ExtendedHighestSequenceNumber}.");
-                }
-                else
-                {
-                    logger.LogDebug($"RTCP sent RR {mediaType}, no packets sent or received.");
-                }
-            }
-        }
-
-        /// <summary>
-        /// Diagnostic handler to print out our RTCP reports from the remote WebRTC peer.
-        /// </summary>
-        private static void RtpSession_OnReceiveReport(IPEndPoint remoteEndPoint, SDPMediaTypesEnum mediaType, RTCPCompoundPacket recvRtcpReport)
-        {
-            if (recvRtcpReport.Bye != null)
-            {
-                logger.LogDebug($"RTCP recv BYE {mediaType}.");
-            }
-            else
-            {
-                var rr = recvRtcpReport.ReceiverReport.ReceptionReports.FirstOrDefault();
-                if (rr != null)
-                {
-                    logger.LogDebug($"RTCP {mediaType} Receiver Report: SSRC {rr.SSRC}, pkts lost {rr.PacketsLost}, delay since SR {rr.DelaySinceLastSenderReport}.");
-                }
-                else
-                {
-                    logger.LogDebug($"RTCP {mediaType} Receiver Report: empty.");
-                }
+                double fps = _frameCount / DateTime.Now.Subtract(_startTime).TotalSeconds;
+                Console.WriteLine($"Frame rate {fps:0.##}fps.");
+                _startTime = DateTime.Now;
+                _frameCount = 0;
             }
         }
 
         /// <summary>
         ///  Adds a console logger. Can be omitted if internal SIPSorcery debug and warning messages are not required.
         /// </summary>
-        private static void AddConsoleLogger()
+        private static Microsoft.Extensions.Logging.ILogger AddConsoleLogger()
         {
-            var loggerFactory = new Microsoft.Extensions.Logging.LoggerFactory();
-            var loggerConfig = new LoggerConfiguration()
+            var seriLogger = new LoggerConfiguration()
                 .Enrich.FromLogContext()
                 .MinimumLevel.Is(Serilog.Events.LogEventLevel.Debug)
                 .WriteTo.Console()
                 .CreateLogger();
-            loggerFactory.AddSerilog(loggerConfig);
-            SIPSorcery.Sys.Log.LoggerFactory = loggerFactory;
+            var factory = new SerilogLoggerFactory(seriLogger);
+            SIPSorcery.LogFactory.Set(factory);
+            return factory.CreateLogger<Program>();
         }
     }
 }
