@@ -464,7 +464,7 @@ namespace SIPSorcery.Net
             {
                 // Supporting MDNS lookups means an additional nuget dependency. Hopefully
                 // support is coming to .Net Core soon (AC 12 Jun 2020).
-                OnIceCandidateError?.Invoke(candidate, $"Remote ICE candidate has an unsupported MDNS hostname {candidate.address}.");
+                OnIceCandidateError?.Invoke(candidate, $"Remote ICE candidate has an unsupported MDNS hostname {candidate.address}.");                
             }
             else if (IPAddress.TryParse(candidate.address, out var addr) &&
                 (IPAddress.Any.Equals(addr) || IPAddress.IPv6Any.Equals(addr)))

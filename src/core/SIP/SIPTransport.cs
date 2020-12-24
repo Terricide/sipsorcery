@@ -772,7 +772,7 @@ namespace SIPSorcery.SIP
                 if (header.Contact.Single().ContactURI.Host.StartsWith(IPAddress.Any.ToString()) ||
                     header.Contact.Single().ContactURI.Host.StartsWith(IPAddress.IPv6Any.ToString()))
                 {
-                    if (!String.IsNullOrEmpty(ContactHost))
+                    if (!Extensions.IsNullOrWhiteSpace(ContactHost))
                     {
                         header.Contact.Single().ContactURI.Host = ContactHost + ":" + sendFromEndPoint.Port.ToString();
                     }
@@ -786,6 +786,17 @@ namespace SIPSorcery.SIP
                 {
                     header.Contact.Single().ContactURI.Protocol = sendFromSIPEndPoint.Protocol;
                 }
+            }
+        }
+
+        private struct Response
+        {
+            public SocketError status;
+            public SIPEndPoint dstEndPoint;
+            public Response(SocketError status, SIPEndPoint dstEndPoint)
+            {
+                this.status = status;
+                this.dstEndPoint = dstEndPoint;
             }
         }
 
@@ -1082,7 +1093,7 @@ namespace SIPSorcery.SIP
 
                 throw new ApplicationException($"The transport layer does not have any SIP channels matching {protocol} and {dst.AddressFamily}.");
             }
-            else if (!String.IsNullOrEmpty(channelIDHint) && m_sipChannels.Any(x => x.Value.IsProtocolSupported(protocol) && x.Key == channelIDHint))
+            else if (!Extensions.IsNullOrWhiteSpace(channelIDHint) && m_sipChannels.Any(x => x.Value.IsProtocolSupported(protocol) && x.Key == channelIDHint))
             {
                 return m_sipChannels[channelIDHint];
             }
