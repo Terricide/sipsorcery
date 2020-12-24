@@ -268,7 +268,7 @@ namespace SIPSorcery.SIP
         /// <returns>True if supported, false if not.</returns>
         public override bool IsAddressFamilySupported(AddressFamily addresFamily)
         {
-            if (m_udpSocket.AddressFamily == AddressFamily.InterNetworkV6 && m_udpSocket.DualMode)
+            if (m_udpSocket.AddressFamily == AddressFamily.InterNetworkV6 && m_udpSocket.DualMode())
             {
                 return true;
             }

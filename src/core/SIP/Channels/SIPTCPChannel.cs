@@ -142,7 +142,7 @@ namespace SIPSorcery.SIP
                 m_tcpServerListener.Server.LingerState = new LingerOption(true, 0);
                 if (listenEndPoint.AddressFamily == AddressFamily.InterNetworkV6)
                 {
-                    m_tcpServerListener.Server.DualMode = true;
+                    m_tcpServerListener.Server.DualMode();
                 }
 
                 m_tcpServerListener.Start(MAX_TCP_CONNECTIONS);

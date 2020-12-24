@@ -241,7 +241,7 @@ namespace SIPSorcery.Net
             {
                 if (RtpSocket != null && RtpSocket.AddressFamily == AddressFamily.InterNetworkV6)
                 {
-                    return RtpSocket.DualMode;
+                    return RtpSocket.DualMode();
                 }
                 else
                 {

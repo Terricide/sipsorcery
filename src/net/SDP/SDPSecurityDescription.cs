@@ -190,7 +190,7 @@ namespace SIPSorcery.Net
                 }
                 set
                 {
-                    if (string.IsNullOrWhiteSpace(value))
+                    if (Extensions.IsNullOrWhiteSpace(value))
                     {
                         throw new ArgumentNullException("LifeTimeString", "LifeTimeString value must be power of 2 string");
                     }
@@ -254,7 +254,7 @@ namespace SIPSorcery.Net
             public override string ToString()
             {
                 string s = KEY_METHOD + COLON + this.KeySaltBase64;
-                if (!string.IsNullOrWhiteSpace(this.LifeTimeString))
+                if (!Extensions.IsNullOrWhiteSpace(this.LifeTimeString))
                 {
                     s += PIPE + this.LifeTimeString;
                 }
@@ -273,7 +273,7 @@ namespace SIPSorcery.Net
 
             public static KeyParameter Parse(string keyParamString, CryptoSuites cryptoSuite = CryptoSuites.AES_CM_128_HMAC_SHA1_80)
             {
-                if (!string.IsNullOrWhiteSpace(keyParamString))
+                if (!Extensions.IsNullOrWhiteSpace(keyParamString))
                 {
                     string p = keyParamString.Trim();
                     try
@@ -290,18 +290,18 @@ namespace SIPSorcery.Net
                                     string sMkiVal, sMkiLen, sLifeTime, sBase64KeySalt;
                                     checkValidKeyInfoCharacters(keyParamString, sKeyInfo);
                                     parseKeyInfo(keyParamString, sKeyInfo, out sMkiVal, out sMkiLen, out sLifeTime, out sBase64KeySalt);
-                                    if (!string.IsNullOrWhiteSpace(sBase64KeySalt))
+                                    if (!Extensions.IsNullOrWhiteSpace(sBase64KeySalt))
                                     {
                                         byte[] bKey, bSalt;
                                         parseKeySaltBase64(cryptoSuite, sBase64KeySalt, out bKey, out bSalt);
 
                                         KeyParameter kp = new KeyParameter(bKey, bSalt);
-                                        if (!string.IsNullOrWhiteSpace(sMkiVal) && !string.IsNullOrWhiteSpace(sMkiLen))
+                                        if (!Extensions.IsNullOrWhiteSpace(sMkiVal) && !Extensions.IsNullOrWhiteSpace(sMkiLen))
                                         {
                                             kp.MkiValue = uint.Parse(sMkiVal);
                                             kp.MkiLength = uint.Parse(sMkiLen);
                                         }
-                                        if (!string.IsNullOrWhiteSpace(sLifeTime))
+                                        if (!Extensions.IsNullOrWhiteSpace(sLifeTime))
                                         {
                                             if (sLifeTime.Contains('^'))
                                             {
@@ -401,7 +401,7 @@ namespace SIPSorcery.Net
             {
                 keyParam = null;
 
-                if (!string.IsNullOrWhiteSpace(keyParamString))
+                if (!Extensions.IsNullOrWhiteSpace(keyParamString))
                 {
                     string p = keyParamString.Trim();
                     try
@@ -418,18 +418,18 @@ namespace SIPSorcery.Net
                                     checkValidKeyInfoCharacters(keyParamString, sKeyInfo);
                                     string sMkiVal, sMkiLen, sLifeTime, sBase64KeySalt;
                                     parseKeyInfo(keyParamString, sKeyInfo, out sMkiVal, out sMkiLen, out sLifeTime, out sBase64KeySalt);
-                                    if (!string.IsNullOrWhiteSpace(sBase64KeySalt))
+                                    if (!Extensions.IsNullOrWhiteSpace(sBase64KeySalt))
                                     {
                                         byte[] bKey, bSalt;
                                         parseKeySaltBase64(cryptoSuite, sBase64KeySalt, out bKey, out bSalt);
 
                                         keyParam = new KeyParameter(bKey, bSalt);
-                                        if (!string.IsNullOrWhiteSpace(sMkiVal) && !string.IsNullOrWhiteSpace(sMkiLen))
+                                        if (!Extensions.IsNullOrWhiteSpace(sMkiVal) && !Extensions.IsNullOrWhiteSpace(sMkiLen))
                                         {
                                             keyParam.MkiValue = uint.Parse(sMkiVal);
                                             keyParam.MkiLength = uint.Parse(sMkiLen);
                                         }
-                                        if (!string.IsNullOrWhiteSpace(sLifeTime))
+                                        if (!Extensions.IsNullOrWhiteSpace(sLifeTime))
                                         {
                                             if (sLifeTime.Contains('^'))
                                             {
@@ -509,11 +509,11 @@ namespace SIPSorcery.Net
                     case CryptoSuites.AES_CM_128_HMAC_SHA1_32:
                     case CryptoSuites.AES_CM_128_HMAC_SHA1_80:
                     case CryptoSuites.F8_128_HMAC_SHA1_80:
-                        if (string.IsNullOrWhiteSpace(key))
+                        if (Extensions.IsNullOrWhiteSpace(key))
                         {
                             key = Sys.Crypto.GetRandomString(128 / 8);
                         }
-                        if (string.IsNullOrWhiteSpace(salt))
+                        if (Extensions.IsNullOrWhiteSpace(salt))
                         {
                             salt = Sys.Crypto.GetRandomString(112 / 8);
                         }
@@ -522,31 +522,31 @@ namespace SIPSorcery.Net
                     case CryptoSuites.AES_192_CM_HMAC_SHA1_32:
                     case CryptoSuites.AES_CM_192_HMAC_SHA1_80:
                     case CryptoSuites.AES_CM_192_HMAC_SHA1_32:
-                        if (string.IsNullOrWhiteSpace(key))
+                        if (Extensions.IsNullOrWhiteSpace(key))
                         {
                             key = Sys.Crypto.GetRandomString(192 / 8);
                         }
-                        if (string.IsNullOrWhiteSpace(salt))
+                        if (Extensions.IsNullOrWhiteSpace(salt))
                         {
                             salt = Sys.Crypto.GetRandomString(112 / 8);
                         }
                         return new KeyParameter(key, salt);
                     case CryptoSuites.AEAD_AES_128_GCM:
-                        if (string.IsNullOrWhiteSpace(key))
+                        if (Extensions.IsNullOrWhiteSpace(key))
                         {
                             key = Sys.Crypto.GetRandomString(128 / 8);
                         }
-                        if (string.IsNullOrWhiteSpace(salt))
+                        if (Extensions.IsNullOrWhiteSpace(salt))
                         {
                             salt = Sys.Crypto.GetRandomString(96 / 8);
                         }
                         return new KeyParameter(key, salt);
                     case CryptoSuites.AEAD_AES_256_GCM:
-                        if (string.IsNullOrWhiteSpace(key))
+                        if (Extensions.IsNullOrWhiteSpace(key))
                         {
                             key = Sys.Crypto.GetRandomString(256 / 8);
                         }
-                        if (string.IsNullOrWhiteSpace(salt))
+                        if (Extensions.IsNullOrWhiteSpace(salt))
                         {
                             salt = Sys.Crypto.GetRandomString(96 / 8);
                         }
@@ -555,11 +555,11 @@ namespace SIPSorcery.Net
                     case CryptoSuites.AES_256_CM_HMAC_SHA1_32:
                     case CryptoSuites.AES_CM_256_HMAC_SHA1_80:
                     case CryptoSuites.AES_CM_256_HMAC_SHA1_32:
-                        if (string.IsNullOrWhiteSpace(key))
+                        if (Extensions.IsNullOrWhiteSpace(key))
                         {
                             key = Sys.Crypto.GetRandomString(256 / 8);
                         }
-                        if (string.IsNullOrWhiteSpace(salt))
+                        if (Extensions.IsNullOrWhiteSpace(salt))
                         {
                             salt = Sys.Crypto.GetRandomString(112 / 8);
                         }
@@ -704,7 +704,7 @@ namespace SIPSorcery.Net
 
             public static SessionParameter Parse(string sessionParam, CryptoSuites cryptoSuite = CryptoSuites.AES_CM_128_HMAC_SHA1_80)
             {
-                if (string.IsNullOrWhiteSpace(sessionParam))
+                if (Extensions.IsNullOrWhiteSpace(sessionParam))
                 {
                     return null;
                 }
@@ -856,7 +856,7 @@ namespace SIPSorcery.Net
 
         public static SDPSecurityDescription Parse(string cryptoLine)
         {
-            if (string.IsNullOrWhiteSpace(cryptoLine))
+            if (Extensions.IsNullOrWhiteSpace(cryptoLine))
             {
                 return null;
             }
@@ -913,7 +913,7 @@ namespace SIPSorcery.Net
         public static bool TryParse(string cryptoLine, out SDPSecurityDescription securityDescription)
         {
             securityDescription = null;
-            if (string.IsNullOrWhiteSpace(cryptoLine))
+            if (Extensions.IsNullOrWhiteSpace(cryptoLine))
             {
                 return false;
             }

@@ -143,7 +143,9 @@ namespace SIPSorcery.Net
         {
             if (certificateChain == null && privateKey == null)
             {
-                (certificateChain, privateKey) = DtlsUtils.CreateSelfSignedTlsCert();
+                var res = DtlsUtils.CreateSelfSignedTlsCert();
+                certificateChain = res.Certificate;
+                privateKey = res.PrivateKey;
             }
 
             this.cipherSuites = base.GetCipherSuites();

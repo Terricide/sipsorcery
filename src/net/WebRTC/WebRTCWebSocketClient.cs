@@ -54,7 +54,7 @@ namespace SIPSorcery.Net
             string webSocketServer,
             Func<Task<RTCPeerConnection>> createPeerConnection)
         {
-            if (string.IsNullOrWhiteSpace(webSocketServer))
+            if (Extensions.IsNullOrWhiteSpace(webSocketServer))
             {
                 throw new ArgumentNullException("The web socket server URI must be supplied.");
             }

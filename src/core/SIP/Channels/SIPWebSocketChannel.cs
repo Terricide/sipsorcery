@@ -173,13 +173,13 @@ namespace SIPSorcery.SIP
 
             logger.LogInformation($"SIP WebSocket Channel created for {endPoint}.");
 
-            m_webSocketServer.AddWebSocketService<SIPMessagWebSocketBehavior>("/", (behaviour) =>
-            {
-                behaviour.Channel = this;
-                behaviour.Logger = this.logger;
+            //m_webSocketServer.AddWebSocketService<SIPMessagWebSocketBehavior>("/", (behaviour) =>
+            //{
+            //    behaviour.Channel = this;
+            //    behaviour.Logger = this.logger;
 
-                behaviour.OnClientClose += (id) => m_ingressConnections.TryRemove(id, out _);
-            });
+            //    behaviour.OnClientClose += (id) => m_ingressConnections.TryRemove(id, out _);
+            //});
 
             m_webSocketServer.Start();
         }

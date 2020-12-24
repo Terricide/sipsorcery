@@ -105,7 +105,7 @@ namespace SIPSorcery.Net
 
             init = null;
 
-            if (string.IsNullOrWhiteSpace(json))
+            if (Extensions.IsNullOrWhiteSpace(json))
             {
                 return false;
             }

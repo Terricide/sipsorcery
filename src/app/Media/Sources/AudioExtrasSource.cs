@@ -382,9 +382,9 @@ namespace SIPSorcery.Media
                     }
                     else if (_audioOpts.AudioSource == AudioSourcesEnum.Music)
                     {
-                        if (string.IsNullOrWhiteSpace(_audioOpts.MusicFile) || !File.Exists(_audioOpts.MusicFile))
+                        if (Extensions.IsNullOrWhiteSpace(_audioOpts.MusicFile) || !File.Exists(_audioOpts.MusicFile))
                         {
-                            if (!string.IsNullOrWhiteSpace(_audioOpts.MusicFile))
+                            if (!Extensions.IsNullOrWhiteSpace(_audioOpts.MusicFile))
                             {
                                 Log.LogWarning($"Music file not set or not found, using default music resource.");
                             }

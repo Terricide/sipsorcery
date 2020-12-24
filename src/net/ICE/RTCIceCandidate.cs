@@ -169,12 +169,12 @@ namespace SIPSorcery.Net
 
                 candidate.foundation = candidateFields[0];
 
-                if (Enum.TryParse<RTCIceComponent>(candidateFields[1], out var candidateComponent))
+                if (Extensions.TryParse<RTCIceComponent>(candidateFields[1], out var candidateComponent))
                 {
                     candidate.component = candidateComponent;
                 }
 
-                if (Enum.TryParse<RTCIceProtocol>(candidateFields[2], out var candidateProtocol))
+                if (Extensions.TryParse<RTCIceProtocol>(candidateFields[2], out var candidateProtocol))
                 {
                     candidate.protocol = candidateProtocol;
                 }
@@ -187,7 +187,7 @@ namespace SIPSorcery.Net
                 candidate.address = candidateFields[4];
                 candidate.port = Convert.ToUInt16(candidateFields[5]);
 
-                if (Enum.TryParse<RTCIceCandidateType>(candidateFields[7], out var candidateType))
+                if (Extensions.TryParse<RTCIceCandidateType>(candidateFields[7], out var candidateType))
                 {
                     candidate.type = candidateType;
                 }
@@ -234,7 +234,7 @@ namespace SIPSorcery.Net
             {
                 string relAddr = relatedAddress;
 
-                if (string.IsNullOrWhiteSpace(relAddr))
+                if (Extensions.IsNullOrWhiteSpace(relAddr))
                 {
                     relAddr = IPAddress.Any.ToString();
                 }

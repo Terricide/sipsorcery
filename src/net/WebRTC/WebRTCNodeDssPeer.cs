@@ -64,17 +64,17 @@ namespace SIPSorcery.Net
             string theirID,
             Func<Task<RTCPeerConnection>> createPeerConnection)
         {
-            if (string.IsNullOrWhiteSpace(nodeDssServer))
+            if (Extensions.IsNullOrWhiteSpace(nodeDssServer))
             {
                 throw new ArgumentNullException("The node DSS server URI must be supplied.");
             }
 
-            if (string.IsNullOrWhiteSpace(ourID))
+            if (Extensions.IsNullOrWhiteSpace(ourID))
             {
                 throw new ArgumentNullException("ourID");
             }
 
-            if (string.IsNullOrWhiteSpace(theirID))
+            if (Extensions.IsNullOrWhiteSpace(theirID))
             {
                 throw new ArgumentNullException("theirID");
             }

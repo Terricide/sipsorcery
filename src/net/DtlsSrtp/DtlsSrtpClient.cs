@@ -130,9 +130,11 @@ namespace SIPSorcery.Net
 
         public DtlsSrtpClient(Certificate certificateChain, AsymmetricKeyParameter privateKey, UseSrtpData clientSrtpData)
         {
-            if(certificateChain == null && privateKey == null)
+            if (certificateChain == null && privateKey == null)
             {
-                (certificateChain, privateKey) = DtlsUtils.CreateSelfSignedTlsCert();
+                var res = DtlsUtils.CreateSelfSignedTlsCert();
+                certificateChain = res.Certificate;
+                privateKey = res.PrivateKey;
             }
 
             if (clientSrtpData == null)

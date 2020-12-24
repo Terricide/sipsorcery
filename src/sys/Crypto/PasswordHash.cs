@@ -62,12 +62,18 @@ namespace SIPSorcery.Sys
             var iters = int.Parse(salt.Substring(0, i), System.Globalization.NumberStyles.HexNumber);
             salt = salt.Substring(i + 1);
 
+#if NET20
+            var pbkdf2 = new Rfc2898DeriveBytes(Encoding.UTF8.GetBytes(value), Convert.FromBase64String(salt), iters);
+            var key = pbkdf2.GetBytes(24);
+            return Convert.ToBase64String(key);
+#else
             using (var pbkdf2 = new Rfc2898DeriveBytes(Encoding.UTF8.GetBytes(value), Convert.FromBase64String(salt), iters))
             {
                 var key = pbkdf2.GetBytes(24);
 
                 return Convert.ToBase64String(key);
             }
+#endif
         }
     }
 }
