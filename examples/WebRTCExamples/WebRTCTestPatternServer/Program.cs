@@ -28,7 +28,7 @@ using Serilog;
 using Serilog.Extensions.Logging;
 using SIPSorcery.Net;
 using SIPSorcery.Media;
-using SIPSorceryMedia.Abstractions.V1;
+using SIPSorceryMedia.Abstractions;
 using SIPSorceryMedia.FFmpeg;
 using WebSocketSharp.Server;
 
@@ -130,7 +130,7 @@ namespace demo
             //testPatternSource.SetMaxFrameRate(true);
             //var videoEndPoint = new SIPSorceryMedia.FFmpeg.FFmpegVideoEndPoint();
             //videoEndPoint.RestrictFormats(format => format.Codec == VideoCodecsEnum.H264);
-            testPatternSource.RestrictFormats(format => format.Codec == VideoCodecsEnum.H264);
+            //testPatternSource.RestrictFormats(format => format.Codec == VideoCodecsEnum.H264);
             //var videoEndPoint = new SIPSorceryMedia.Windows.WindowsEncoderEndPoint();
             //var videoEndPoint = new SIPSorceryMedia.Encoders.VideoEncoderEndPoint();
 
@@ -179,7 +179,7 @@ namespace demo
             return Task.FromResult(pc);
         }
 
-        private static void MesasureTestPatternSourceFrameRate(uint durationMilliseconds, int width, int height, byte[] sample, SIPSorceryMedia.Abstractions.V1.VideoPixelFormatsEnum pixelFormat)
+        private static void MesasureTestPatternSourceFrameRate(uint durationMilliseconds, int width, int height, byte[] sample, VideoPixelFormatsEnum pixelFormat)
         {
             if(_startTime == DateTime.MinValue)
             {

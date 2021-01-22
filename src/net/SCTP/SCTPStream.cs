@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright 2017 pi.pe gmbh .
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,7 @@
  */
 
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using SCTP4CS.Utils;
@@ -28,6 +29,15 @@ using SIPSorcery.Sys;
 
 namespace SIPSorcery.Net.Sctp
 {
+    public enum ReliabilityType : byte
+    {
+        // ReliabilityTypeReliable is used for reliable transmission
+        Reliable = 0,
+        // ReliabilityTypeRexmit is used for partial reliability by retransmission count
+        TypeRexmit = 1,
+        // ReliabilityTypeTimed is used for partial reliability by retransmission duration
+        TypeTimed = 2
+    }
     public abstract class SCTPStream
     {
         /* unfortunately a webRTC SCTP stream can change it's reliability rules etc post creation
@@ -42,13 +52,21 @@ namespace SIPSorcery.Net.Sctp
         private SCTPStreamBehaviour _behave;
         protected Association _ass;
         private int _sno;
-        private string _label;
-        private SortedArray<DataChunk> _stash;
+        private string name;
+        protected ReassemblyQueue reassemblyQueue;
+        private bool unordered;
+        public ReliabilityType reliabilityType;
+        public uint reliabilityValue = 10;
         private SCTPStreamListener _sl;
         private int _nextMessageSeqIn;
-        private int _nextMessageSeqOut;
+        private ushort _nextMessageSeqOut;
         private bool closing;
         private State state = State.OPEN;
+        private long bufferedAmount;
+        private long bufferedAmountLow;
+        public object rwLock = new object();
+        public Action onBufferedAmountLow;
+        private ManualResetEvent readNotifier = new ManualResetEvent(false);
 
         public Action OnOpen;
 
@@ -76,8 +94,6 @@ namespace SIPSorcery.Net.Sctp
             return ret;
         }
 
-        abstract public void delivered(DataChunk d);
-
         enum State
         {
             CLOSED, INBOUNDONLY, OUTBOUNDONLY, OPEN
@@ -87,13 +103,14 @@ namespace SIPSorcery.Net.Sctp
         {
             _ass = a;
             _sno = id;
-            _stash = new SortedArray<DataChunk>(); // sort bt tsn
+            reassemblyQueue = new ReassemblyQueue(); // sort bt tsn
+            reassemblyQueue.si = id;
             _behave = new OrderedStreamBehaviour(); // default 'till we know different
         }
 
         public void setLabel(string l)
         {
-            _label = l;
+            name = l;
         }
 
         public int getNum()
@@ -103,14 +120,7 @@ namespace SIPSorcery.Net.Sctp
 
         public override string ToString()
         {
-            return $"Stream id {_sno}, label {_label}, state {state} behaviour { _behave.GetType().Name}.";
-        }
-
-        public Chunk[] append(DataChunk dc)
-        {
-            //logger.LogDebug("adding data to stash on stream " + _label + "(" + dc + ")");
-            _stash.Add(dc);
-            return _behave.respond(this);
+            return $"Stream id {_sno}, label {name}, state {state}";// behaviour { _behave.GetType().Name}.";
         }
 
         /**
@@ -136,55 +146,37 @@ namespace SIPSorcery.Net.Sctp
             // roll seqno here.... hopefully....
         }
 
-        public void inbound(DataChunk dc)
+        public void handleData(DataChunk pd)
         {
-            if (_behave != null)
+            if (reassemblyQueue.push(pd, out var blocks))
             {
-                _behave.deliver(this, _stash, _sl);
-            }
-            else
-            {
-                logger.LogWarning("No behaviour set");
+                SCTPMessage m = new SCTPMessage(this, blocks);
+                m.deliver(_sl);
             }
         }
 
         public string getLabel()
         {
-            return _label;
-        }
-
-        public int stashCap()
-        {
-            int ret = 0;
-            foreach (DataChunk d in _stash)
-            {
-                ret += d.getData().Length;
-            }
-            return ret;
+            return name;
         }
 
         public void setSCTPStreamListener(SCTPStreamListener sl)
         {
             _sl = sl;
-            //logger.LogDebug("action a delayed delivery now we have a listener.");
-            //todo think about what reliablility looks like here.
-            _behave.deliver(this, _stash, _sl);
         }
 
         abstract public void send(string message);
 
         abstract public void send(byte[] message);
 
-        abstract public Task sendasync(string message);
-
-        abstract public Task sendasync(byte[] message);
+        abstract public uint getNumBytesInReassemblyQueue();
 
         public Association getAssociation()
         {
             return _ass;
         }
 
-        public void close()
+        public virtual void close()
         {
             //logger.LogDebug($"SCTP closing stream id {_sno}, label {_label}.");
             _ass.closeStream(this);
@@ -202,20 +194,15 @@ namespace SIPSorcery.Net.Sctp
 
         public void setNextMessageSeqOut(int expectedSeq)
         {
-            _nextMessageSeqOut = (expectedSeq == 1 + ushort.MaxValue) ? 0 : expectedSeq;
+            _nextMessageSeqOut = (ushort)((expectedSeq == 1 + ushort.MaxValue) ? 0 : expectedSeq);
         }
 
-        public int getNextMessageSeqOut()
+        public ushort getNextMessageSeqOut()
         {
             return _nextMessageSeqOut;
         }
 
         abstract internal void deliverMessage(SCTPMessage message);
-
-        //public void setDeferred(bool b)
-        //{
-        //    bool deferred = true;
-        //}
 
         public void reset()
         {
@@ -226,59 +213,67 @@ namespace SIPSorcery.Net.Sctp
             }
         }
 
-        public void setClosing(bool b)
+        public virtual void setClosing(bool b)
         {
             closing = b;
-        }
-
-        bool isClosing()
-        {
-            return closing;
-        }
-
-        void setOutboundClosed()
-        {
-            switch (state)
-            {
-                case State.OPEN:
-                    state = State.INBOUNDONLY;
-                    break;
-                case State.OUTBOUNDONLY:
-                    state = State.CLOSED;
-                    break;
-                case State.CLOSED:
-                case State.INBOUNDONLY:
-                    break;
-            }
-            logger.LogDebug("Stream State for " + _sno + " is now " + state);
-        }
-
-        void setInboundClosed()
-        {
-            switch (state)
-            {
-                case State.OPEN:
-                    state = State.OUTBOUNDONLY;
-                    break;
-                case State.INBOUNDONLY:
-                    state = State.CLOSED;
-                    break;
-                case State.CLOSED:
-                case State.OUTBOUNDONLY:
-                    break;
-            }
-            logger.LogDebug("Stream State for " + _sno + " is now " + state);
-        }
-
-        State getState()
-        {
-            //logger.LogDebug("Stream State for " + _sno + " is currently " + state);
-            return state;
         }
 
         public virtual bool idle()
         {
             return true;
+        }
+
+        public void AddBytesToBuffer(uint nBytesAdded)
+        {
+            if (nBytesAdded <= 0)
+            {
+                return;
+            }
+
+            lock (rwLock)
+            {
+                bufferedAmount += nBytesAdded;
+            }
+        }
+
+
+        internal void onBufferReleased(uint nBytesReleased)
+        {
+            if (nBytesReleased <= 0)
+            {
+                return;
+            }
+
+            Action f = null;
+            lock (rwLock)
+            {
+                var fromAmount = bufferedAmount;
+
+
+                if (bufferedAmount < nBytesReleased)
+                {
+                    bufferedAmount = 0;
+
+                    logger.LogError($"{name} released buffer size {nBytesReleased} should be <= {bufferedAmount}");
+                }
+                else
+                {
+                    bufferedAmount -= nBytesReleased;
+                }
+
+                logger.LogTrace($"{name} bufferedAmount = {bufferedAmount}");
+
+
+                if (onBufferedAmountLow != null && fromAmount > bufferedAmountLow && bufferedAmount <= bufferedAmountLow)
+                {
+                    f = onBufferedAmountLow;
+                }
+            }
+
+            if (f != null)
+            {
+                f();
+            }
         }
     }
 }

@@ -169,8 +169,6 @@ namespace SIPSorcery.SIP
         {
             SIPRequest copy = new SIPRequest();
             copy.SIPVersion = SIPVersion;
-            //copy.SIPMajorVersion = m_sipMajorVersion;
-            //copy.SIPMinorVersion = m_sipMinorVersion;
             copy.Method = Method;
             copy.UnknownMethod = UnknownMethod;
             copy.URI = URI?.CopyOf();
@@ -307,7 +305,7 @@ namespace SIPSorcery.SIP
             request.Header = header;
             header.CSeqMethod = method;
             header.Allow = m_allowedSIPMethods;
-            header.Vias.PushViaHeader(SIPViaHeader.GetDefaultSIPViaHeader());
+            header.Vias.PushViaHeader(SIPViaHeader.GetDefaultSIPViaHeader(uri.Protocol));
 
             return request;
         }

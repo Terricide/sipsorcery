@@ -44,7 +44,7 @@ namespace SIPSorcery.Net.Sctp
             _rcv.Name = "UDPForwarding_rcv";
             _rcv.Start();
             SCTPStreamBehaviour behave = mkBehave();
-            base.setBehave(behave);
+            //base.setBehave(behave);
         }
 
         public void run()

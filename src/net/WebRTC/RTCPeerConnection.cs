@@ -442,20 +442,23 @@ namespace SIPSorcery.Net
 
                             try
                             {
-                                bool handshakeResult = await Task.Run(() => DoDtlsHandshake(_dtlsHandle)).ConfigureAwait(false);
+                                _ = Task.Run(async () =>
+                                {
+                                    bool handshakeResult = DoDtlsHandshake(_dtlsHandle);
 
-                                connectionState = (handshakeResult) ? RTCPeerConnectionState.connected : connectionState = RTCPeerConnectionState.failed;
-                                onconnectionstatechange?.Invoke(connectionState);
+                                    connectionState = (handshakeResult) ? RTCPeerConnectionState.connected : connectionState = RTCPeerConnectionState.failed;
+                                    onconnectionstatechange?.Invoke(connectionState);
 
-                               if (connectionState == RTCPeerConnectionState.connected)
-                               {
-                                    await base.Start().ConfigureAwait(false);
-
-                                    if (RemoteDescription.Media.Any(x => x.Media == SDPMediaTypesEnum.application))
+                                    if (connectionState == RTCPeerConnectionState.connected)
                                     {
-                                        InitialiseSctpAssociation();
+                                        await base.Start().ConfigureAwait(false);
+
+                                        if (RemoteDescription.Media.Any(x => x.Media == SDPMediaTypesEnum.application))
+                                        {
+                                            InitialiseSctpAssociation();
+                                        }
                                     }
-                               }
+                                });
                             }
                             catch (Exception excp)
                             {
@@ -774,6 +777,7 @@ namespace SIPSorcery.Net
 
                 _rtpIceChannel?.Close();
                 _dtlsHandle?.Close();
+                _dtlsHandle = null;
                 _peerSctpAssociation?.Close();
 
                 base.Close(reason);
@@ -1201,33 +1205,19 @@ namespace SIPSorcery.Net
         {
             logger.LogDebug($"Attempting to create SCTP stream for data channel with label {dataChannel.label}.");
 
-            Task.Run(() =>
+            Task.Run(async () =>
             {
-                return _peerSctpAssociation.CreateStream(dataChannel.label);
-            })
-            .ContinueWith(
-                (t) =>
+                try
                 {
-                    if (t.IsFaulted)
-                    {
-                        if (t.Exception != null)
-                        {
-                            logger.LogWarning($"Exception creating data channel {t.Exception.Flatten().Message}");
-                            dataChannel.SetError(t.Exception.InnerExceptions.First().Message);
-                        }
-                        else
-                        {
-                            logger.LogWarning($"Unable to create a data channel.");
-                            dataChannel.SetError(UNKNOWN_DATACHANNEL_ERROR);
-                        }
-                    }
-                    else
-                    {
-                        logger.LogDebug($"SCTP stream successfully initialised for data channel with label {dataChannel.label}.");
-                        dataChannel.SetStream(t.Result);
-                    }
-                })
-            .ConfigureAwait(false);
+                    var s = await _peerSctpAssociation.CreateStream(dataChannel.label).ConfigureAwait(false);
+                    dataChannel.SetStream(s);
+                }
+                catch (Exception e)
+                {
+                    logger.LogWarning($"Exception creating data channel {e.Message}");
+                    dataChannel.SetError(e.Message);
+                }
+            });
         }
 
         /// <summary>

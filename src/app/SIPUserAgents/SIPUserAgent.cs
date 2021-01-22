@@ -551,7 +551,7 @@ namespace SIPSorcery.SIP.App
         public SIPServerUserAgent AcceptCall(SIPRequest inviteRequest)
         {
             UASInviteTransaction uasTransaction = new UASInviteTransaction(m_transport, inviteRequest, m_outboundProxy);
-            SIPServerUserAgent uas = new SIPServerUserAgent(m_transport, m_outboundProxy, null, null, SIPCallDirection.In, null, null, uasTransaction);
+            SIPServerUserAgent uas = new SIPServerUserAgent(m_transport, m_outboundProxy, uasTransaction, null);
             uas.ClientTransaction.TransactionStateChanged += (tx) => OnTransactionStateChange?.Invoke(tx);
             uas.ClientTransaction.TransactionTraceMessage += (tx, msg) => OnTransactionTraceMessage?.Invoke(tx, msg);
             uas.CallCancelled += (pendingUas) =>
@@ -1112,7 +1112,7 @@ namespace SIPSorcery.SIP.App
                                null,
                                null);
 
-                            var transferResult = await Call(callDescriptor, MediaSession);
+                            var transferResult = await Call(callDescriptor, MediaSession).ConfigureAwait(false);
 
                             logger.LogDebug($"Result of calling transfer destination {transferResult}.");
 
@@ -1298,7 +1298,7 @@ namespace SIPSorcery.SIP.App
                 // Pause to give the hold request time to get processed. Otherwise the BYE request can get sent
                 // before the hold request which will be interpreted as an missing dialog on the transferor and
                 // which can be confusing.
-                await Task.Delay(WAIT_ONHOLD_TIMEOUT);
+                await Task.Delay(WAIT_ONHOLD_TIMEOUT).ConfigureAwait(false);
             }
 
             if (MediaSession.HasAudio)
@@ -1314,7 +1314,7 @@ namespace SIPSorcery.SIP.App
             // Get the BYE request for the original dialog so it can be sent if answering the transfer call succeeds.
             SIPRequest byeRequest = m_sipDialogue.GetInDialogRequest(SIPMethodsEnum.BYE);
 
-            bool answerResult = await Answer(uas, MediaSession);
+            bool answerResult = await Answer(uas, MediaSession).ConfigureAwait(false);
 
             if (answerResult)
             {

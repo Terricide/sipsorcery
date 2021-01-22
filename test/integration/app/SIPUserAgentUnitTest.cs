@@ -27,7 +27,7 @@ using SIPSorcery.Media;
 using SIPSorcery.Net;
 using SIPSorcery.SIP.App;
 using SIPSorcery.UnitTests;
-using SIPSorceryMedia.Abstractions.V1;
+using SIPSorceryMedia.Abstractions;
 using Xunit;
 
 namespace SIPSorcery.SIP.IntegrationTests
@@ -91,7 +91,7 @@ namespace SIPSorcery.SIP.IntegrationTests
             SIPRequest inviteReq = SIPRequest.ParseSIPRequest(sipMessageBuffer);
 
             UASInviteTransaction uasTx = new UASInviteTransaction(transport, inviteReq, null);
-            SIPServerUserAgent mockUas = new SIPServerUserAgent(transport, null, null, null, SIPCallDirection.In, null, null, uasTx);
+            SIPServerUserAgent mockUas = new SIPServerUserAgent(transport, null, uasTx, null);
             await userAgent.Answer(mockUas, CreateMediaSession());
 
             CancellationTokenSource cts = new CancellationTokenSource();
@@ -146,7 +146,7 @@ namespace SIPSorcery.SIP.IntegrationTests
             SIPRequest inviteReq = SIPRequest.ParseSIPRequest(sipMessageBuffer);
 
             UASInviteTransaction uasTx = new UASInviteTransaction(transport, inviteReq, null);
-            SIPServerUserAgent mockUas = new SIPServerUserAgent(transport, null, null, null, SIPCallDirection.In, null, null, uasTx);
+            SIPServerUserAgent mockUas = new SIPServerUserAgent(transport, null, uasTx, null);
             await userAgent.Answer(mockUas, CreateMediaSession());
 
             CancellationTokenSource cts = new CancellationTokenSource();
@@ -206,7 +206,7 @@ namespace SIPSorcery.SIP.IntegrationTests
             SIPRequest inviteReq = SIPRequest.ParseSIPRequest(sipMessageBuffer);
 
             UASInviteTransaction uasTx = new UASInviteTransaction(transport, inviteReq, null);
-            SIPServerUserAgent mockUas = new SIPServerUserAgent(transport, null, null, null, SIPCallDirection.In, null, null, uasTx);
+            SIPServerUserAgent mockUas = new SIPServerUserAgent(transport, null, uasTx, null);
             await userAgent.Answer(mockUas, CreateMediaSession());
 
             // Incremented Cseq and modified Via header from original request. Means the request is the same dialog but different tx.
@@ -586,7 +586,7 @@ a=sendrecv";
                     else
                     {
                         UASInviteTransaction uasTransaction = new UASInviteTransaction(calleeTransport, req, null);
-                        var uas = new SIPServerUserAgent(calleeTransport, null, null, null, SIPCallDirection.In, null, null, uasTransaction);
+                        var uas = new SIPServerUserAgent(calleeTransport, null, uasTransaction, null);
                         uas.Progress(SIPResponseStatusCodesEnum.Trying, null, null, null, null);
                         uas.Progress(SIPResponseStatusCodesEnum.Ringing, null, null, null, null);
 
@@ -653,7 +653,7 @@ a=sendrecv";
                     else
                     {
                         UASInviteTransaction uasTransaction = new UASInviteTransaction(calleeTransport, req, null);
-                        var uas = new SIPServerUserAgent(calleeTransport, null, null, null, SIPCallDirection.In, null, null, uasTransaction);
+                        var uas = new SIPServerUserAgent(calleeTransport, null, uasTransaction, null);
                         uas.Progress(SIPResponseStatusCodesEnum.Trying, null, null, null, null);
                         uas.Progress(SIPResponseStatusCodesEnum.Ringing, null, null, null, null);
 

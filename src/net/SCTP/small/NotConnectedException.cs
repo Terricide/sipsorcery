@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright 2017 pi.pe gmbh .
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,29 +16,28 @@
  */
 // Modified by Andrés Leone Gámez
 
-
 using System;
-using System.Threading;
+using System.Runtime.Serialization;
 
-/**
- *
- * @author tim
- * Assumption is that timers _always_ go off - it is up to the 
- * runnable to decide if something needs to be done or not.
- */
 namespace SIPSorcery.Net.Sctp
 {
-    static class SimpleSCTPTimer
+    [Serializable]
+    internal class NotConnectedException : Exception
     {
-        private static Timer timer = null;
-        public static void setRunnable(Action r, long at)
+        public NotConnectedException()
         {
-            if (timer != null)
-            {
-                timer?.Dispose();
-            }
+        }
 
-            timer = new Timer((o) => { r(); }, null, at, Timeout.Infinite);
+        public NotConnectedException(string message) : base(message)
+        {
+        }
+
+        public NotConnectedException(string message, Exception innerException) : base(message, innerException)
+        {
+        }
+
+        protected NotConnectedException(SerializationInfo info, StreamingContext context) : base(info, context)
+        {
         }
     }
 }

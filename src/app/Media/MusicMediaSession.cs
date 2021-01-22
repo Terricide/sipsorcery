@@ -2,7 +2,7 @@
 using System.Net;
 using System.Threading.Tasks;
 using SIPSorcery.Net;
-using SIPSorceryMedia.Abstractions.V1;
+using SIPSorceryMedia.Abstractions;
 
 namespace SIPSorcery.Media
 {
@@ -22,9 +22,9 @@ namespace SIPSorcery.Media
             _mediaStream = new MediaStreamTrack(SDPMediaTypesEnum.audio, true, AudioLocalTrack.Capabilities);
         }
 
-        public async Task SendAudioFile(string fileToPlay)
+        public Task SendAudioFile(string fileToPlay)
         {
-            await AudioExtrasSource.SendAudioFromStream(
+            return AudioExtrasSource.SendAudioFromStream(
                         new FileStream(fileToPlay, FileMode.Open, FileAccess.Read, FileShare.Read), AudioSamplingRatesEnum.Rate8KHz);
 
         }
