@@ -2,7 +2,7 @@
   "profiles": {
     "sipcmdline": {
       "commandName": "Project",
-      "commandLineArgs": "-d sipsorcery.com"
+      "commandLineArgs": "-d 127.0.0.1;transport=tcp"
     },
     "Docker": {
       "commandName": "Docker"

@@ -19,7 +19,7 @@ using System.Linq;
 using System.Net;
 using Microsoft.Extensions.Logging;
 using SIPSorcery.Sys;
-using SIPSorceryMedia.Abstractions.V1;
+using SIPSorceryMedia.Abstractions;
 using Xunit;
 
 namespace SIPSorcery.Net.UnitTests
@@ -206,7 +206,7 @@ namespace SIPSorcery.Net.UnitTests
 
             logger.LogDebug($"Set remote description on local session result {result}.");
 
-            Assert.Equal(SDP.IGNORE_RTP_PORT_NUMBER, localSession.AudioDestinationEndPoint.Port);
+            Assert.Null(localSession.AudioDestinationEndPoint);
 
             localSession.Close("normal");
         }

@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright 2017 pi.pe gmbh .
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -178,6 +178,9 @@ namespace SIPSorcery.Net.Sctp
                     case ChunkType.ERROR:
                         ret = new ErrorChunk(type, flags, length, pkt);
                         break;
+                    case ChunkType.FORWARDTSN:
+                        ret = new ForwardTsnChunk(type, flags, length, pkt);
+                        break;
                     default:
                         logger.LogWarning($"SCTP unknown chunk type received {type}.");
                         ret = new FailChunk(type, flags, length, pkt);
@@ -206,6 +209,7 @@ namespace SIPSorcery.Net.Sctp
         int _length;
         protected ByteBuffer _body;
         public List<VariableParam> _varList = new List<VariableParam>();
+
 
         protected Chunk(ChunkType type)
         {

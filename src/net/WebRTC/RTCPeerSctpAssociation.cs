@@ -94,6 +94,7 @@ namespace SIPSorcery.Net
                     _sctpAssociation.getStream(streamID)?.close();
                     _sctpAssociation.delStream(streamID);
                 }
+                _sctpAssociation?.close();
             }
         }
 
@@ -122,7 +123,7 @@ namespace SIPSorcery.Net
         /// <param name="s">The SCTP stream that was created.</param>
         /// <param name="label">The label for the stream. Can be empty and can also be a duplicate.</param>
         /// <param name="payloadProtocolID">The payload protocol ID of the new stream.</param>
-        public void onDCEPStream(SCTPStream s, string label, int payloadProtocolID)
+        public void onDCEPStream(SCTPStream s, string label, uint payloadProtocolID)
         {
             logger.LogDebug($"SCTP data channel stream opened for label {label}, ppid {payloadProtocolID}, stream id {s.getNum()}.");
 

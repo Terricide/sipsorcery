@@ -128,7 +128,7 @@ namespace SIPSorcery.Net
         /// <summary>
         /// The period in seconds after which a connection will be flagged as disconnected.
         /// </summary>
-        public static int DISCONNECTED_TIMEOUT_PERIOD = 8;
+        public static int DISCONNECTED_TIMEOUT_PERIOD = 16;
 
         /// <summary>
         /// The period in seconds after which a connection will be flagged as failed.
@@ -244,7 +244,7 @@ namespace SIPSorcery.Net
         private bool _closed = false;
         private Timer _connectivityChecksTimer;
         private Timer _processIceServersTimer;
-        private DateTime _checlistStartedAt = DateTime.MinValue;
+        private DateTime _checklistStartedAt = DateTime.MinValue;
 
         public event Action<RTCIceCandidate> OnIceCandidate;
         public event Action<RTCIceConnectionState> OnIceConnectionStateChange;
@@ -410,12 +410,23 @@ namespace SIPSorcery.Net
             RemoteIceUser = username;
             RemoteIcePassword = password;
 
-            _checlistStartedAt = DateTime.Now;
+            if (IceConnectionState == RTCIceConnectionState.@new)
+            {
+                // A potential race condition exists here. The remote peer can send a binding request that
+                // results in the ICE channel connecting BEFORE the remote credentials get set. Since the goal
+                // is to connect ICE as quickly as possible it does not seem sensible to force a wait for the
+                // remote credentials to be set. The credentials will still be used on STUN binding requests
+                // sent on the connected ICE channel. In the case of WebRTC transport confidentiality is still
+                // preserved since the DTLS negotiation will sill need to check the certificate fingerprint in
+                // supplied by the remote offer.
 
-            // Once the remote party's ICE credentials are known connection checking can 
-            // commence immediately as candidates trickle in.
-            IceConnectionState = RTCIceConnectionState.checking;
-            OnIceConnectionStateChange?.Invoke(IceConnectionState);
+                _checklistStartedAt = DateTime.Now;
+
+                // Once the remote party's ICE credentials are known connection checking can 
+                // commence immediately as candidates trickle in.
+                IceConnectionState = RTCIceConnectionState.checking;
+                OnIceConnectionStateChange?.Invoke(IceConnectionState);
+            }
         }
 
         /// <summary>
@@ -537,7 +548,13 @@ namespace SIPSorcery.Net
         ///   
         /// This implementation implements Mode 2.
         /// </summary>
-        /// <remarks>See https://tools.ietf.org/html/rfc8445#section-5.1.1.1</remarks>
+        /// <remarks>
+        /// See https://tools.ietf.org/html/rfc8445#section-5.1.1.1
+        /// See https://tools.ietf.org/html/rfc6874 for a recommendation on how scope or zone ID's
+        /// should be represented as strings in IPv6 link local addresses. Due to parsing
+        /// issues in at least two other WebRTC stacks (as of Feb 2021) any zone ID is removed
+        /// from an ICE candidate string.
+        /// </remarks>
         /// <returns>A list of "host" ICE candidates for the local machine.</returns>
         private List<RTCIceCandidate> GetHostCandidates()
         {
@@ -855,7 +872,7 @@ namespace SIPSorcery.Net
 
                 foreach (var remoteCandidate in _remoteCandidates)
                 {
-                    await UpdateChecklist(_relayChecklistCandidate, remoteCandidate);
+                    await UpdateChecklist(_relayChecklistCandidate, remoteCandidate).ConfigureAwait(false);
                 }
             }
 
@@ -895,7 +912,7 @@ namespace SIPSorcery.Net
                     }
                     else
                     {
-                        remoteCandidateIPAddr = await MdnsResolve(remoteCandidate.address);
+                        remoteCandidateIPAddr = await MdnsResolve(remoteCandidate.address).ConfigureAwait(false);
                         if (remoteCandidateIPAddr == null)
                         {
                             logger.LogWarning($"RTP ICE channel MDNS resolver failed to resolve {remoteCandidate.address}.");
@@ -912,7 +929,7 @@ namespace SIPSorcery.Net
                 else
                 {
                     // The candidate string can be a hostname or an IP address.
-                    var lookupResult = await _dnsLookupClient.QueryAsync(remoteCandidate.address, DnsClient.QueryType.A);
+                    var lookupResult = await _dnsLookupClient.QueryAsync(remoteCandidate.address, DnsClient.QueryType.A).ConfigureAwait(false);
 
                     if (lookupResult.Answers.Count > 0)
                     {
@@ -1091,7 +1108,7 @@ namespace SIPSorcery.Net
                         {
                             // The local relay candidate has already been checked and any hostnames 
                             // resolved when the ICE servers were checked.
-                            await UpdateChecklist(_relayChecklistCandidate, candidate);
+                            await UpdateChecklist(_relayChecklistCandidate, candidate).ConfigureAwait(false);
                         }
                     }
                 }
@@ -1154,16 +1171,16 @@ namespace SIPSorcery.Net
                             }
                         }
                     }
-                    else if (_checlistStartedAt != DateTime.MinValue &&
-                        DateTime.Now.Subtract(_checlistStartedAt).TotalSeconds > FAILED_TIMEOUT_PERIOD)
+                    else if (_checklistStartedAt != DateTime.MinValue &&
+                        DateTime.Now.Subtract(_checklistStartedAt).TotalSeconds > FAILED_TIMEOUT_PERIOD)
                     {
                         // No checklist entries were made available before the failed timeout.
-                        logger.LogWarning($"ICE RTP channel failed to connect as no checklist entries became available within {DateTime.Now.Subtract(_checlistStartedAt).TotalSeconds}s.");
+                        logger.LogWarning($"ICE RTP channel failed to connect as no checklist entries became available within {DateTime.Now.Subtract(_checklistStartedAt).TotalSeconds}s.");
 
                         _checklistState = ChecklistState.Failed;
                         //IceConnectionState = RTCIceConnectionState.disconnected;
                         // No point going to and ICE disconnected state as there was never a connection and therefore
-                        // nothing ot monitor for a re-connection.
+                        // nothing to monitor for a re-connection.
                         IceConnectionState = RTCIceConnectionState.failed;
                         OnIceConnectionStateChange?.Invoke(IceConnectionState);
                     }
@@ -1274,6 +1291,10 @@ namespace SIPSorcery.Net
         private void SendSTUNBindingRequest(ChecklistEntry candidatePair, bool setUseCandidate)
         {
             STUNMessage stunRequest = new STUNMessage(STUNMessageTypesEnum.BindingRequest);
+            if (string.IsNullOrEmpty(candidatePair.RequestTransactionID))
+            {
+                return;
+            }
             stunRequest.Header.TransactionId = Encoding.ASCII.GetBytes(candidatePair.RequestTransactionID);
             stunRequest.AddUsernameAttribute(RemoteIceUser + ":" + LocalIceUser);
             stunRequest.Attributes.Add(new STUNAttribute(STUNAttributeTypesEnum.Priority, BitConverter.GetBytes(candidatePair.LocalPriority)));
@@ -1353,6 +1374,7 @@ namespace SIPSorcery.Net
                         OnIceConnectionStateChange?.Invoke(IceConnectionState);
                     }
 
+                    candidatePair.RequestTransactionID = candidatePair.RequestTransactionID ?? Crypto.GetRandomString(STUNHeader.TRANSACTION_ID_LENGTH);
                     candidatePair.LastCheckSentAt = DateTime.Now;
                     candidatePair.ChecksSent++;
 
@@ -1390,7 +1412,7 @@ namespace SIPSorcery.Net
                 {
                     // Safe to wait here as the candidates from an ICE server will always be IP addresses only,
                     // no DNS lookups required.
-                    await AddCandidatesForIceServer(iceServer);
+                    await AddCandidatesForIceServer(iceServer).ConfigureAwait(false);
                 }
             }
             else
@@ -1460,7 +1482,7 @@ namespace SIPSorcery.Net
         {
             if (_policy == RTCIceTransportPolicy.relay && !wasRelayed)
             {
-                // If the policy is "relay only" then direct binding requests are accepted.
+                // If the policy is "relay only" then direct binding requests are not accepted.
                 logger.LogWarning($"ICE RTP channel rejecting non-relayed STUN binding request from {remoteEndPoint}.");
 
                 STUNMessage stunErrResponse = new STUNMessage(STUNMessageTypesEnum.BindingErrorResponse);
@@ -1499,7 +1521,8 @@ namespace SIPSorcery.Net
                          ).FirstOrDefault();
                     }
 
-                    if (matchingChecklistEntry == null && (_remoteCandidates == null || !_remoteCandidates.Any(x => x.IsEquivalentEndPoint(RTCIceProtocol.udp, remoteEndPoint))))
+                    if (matchingChecklistEntry == null && 
+                        (_remoteCandidates == null || !_remoteCandidates.Any(x => x.IsEquivalentEndPoint(RTCIceProtocol.udp, remoteEndPoint))))
                     {
                         // This STUN request has come from a socket not in the remote ICE candidates list. 
                         // Add a new remote peer reflexive candidate. 
@@ -1549,12 +1572,12 @@ namespace SIPSorcery.Net
                                 logger.LogDebug($"ICE RTP channel remote peer nominated entry from binding request: {matchingChecklistEntry.RemoteCandidate.ToShortString()}.");
                                 SetNominatedEntry(matchingChecklistEntry);
                             }
-                            else if(matchingChecklistEntry.RemoteCandidate.ToString() != NominatedEntry.RemoteCandidate.ToString())
+                            else if (matchingChecklistEntry.RemoteCandidate.ToString() != NominatedEntry.RemoteCandidate.ToString())
                             {
                                 // The remote peer is changing the nominated candidate.
                                 logger.LogDebug($"ICE RTP channel remote peer nominated a new candidate: {matchingChecklistEntry.RemoteCandidate.ToShortString()}.");
                                 SetNominatedEntry(matchingChecklistEntry);
-                            }                           
+                            }
                         }
 
                         matchingChecklistEntry.LastBindingRequestReceivedAt = DateTime.Now;

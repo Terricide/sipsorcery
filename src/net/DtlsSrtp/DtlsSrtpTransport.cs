@@ -18,9 +18,11 @@
 
 using System;
 using System.Collections.Concurrent;
+using System.Net.Sockets;
 using Microsoft.Extensions.Logging;
 using Org.BouncyCastle.Crypto.Tls;
 using Org.BouncyCastle.Security;
+using SIPSorcery.Executor;
 using SIPSorcery.Sys;
 
 namespace SIPSorcery.Net
@@ -47,7 +49,7 @@ namespace SIPSorcery.Net
         IDtlsSrtpPeer connection = null;
 
         /// <summary>The collection of chunks to be written.</summary>
-        private BlockingCollection<byte[]> _chunks = new BlockingCollection<byte[]>(new ConcurrentQueue<byte[]>());
+        private ProducerConsumerQueue<byte[]> _chunks = new ProducerConsumerQueue<byte[]>();
 
         public DtlsTransport Transport { get; private set; }
 
@@ -56,7 +58,6 @@ namespace SIPSorcery.Net
         /// after.
         /// </summary>
         public int TimeoutMilliseconds = DEFAULT_TIMEOUT_MILLISECONDS;
-
 
         /// <summary>
         /// Sets the period in milliseconds that receive will wait before try retransmission
@@ -199,7 +200,14 @@ namespace SIPSorcery.Net
                 }
                 catch (System.Exception excp)
                 {
-                    logger.LogWarning($"DTLS handshake as client failed. {excp.Message}");
+                    if (excp.InnerException is TimeoutException)
+                    {
+                        logger.LogWarning(excp, $"DTLS handshake as client timed out waiting for handshake to complete.");
+                    }
+                    else
+                    {
+                        logger.LogWarning(excp, $"DTLS handshake as client failed. {excp.Message}");
+                    }
 
                     // Declare handshake as failed
                     _handshakeComplete = false;
@@ -249,7 +257,14 @@ namespace SIPSorcery.Net
                 }
                 catch (System.Exception excp)
                 {
-                    logger.LogWarning($"DTLS handshake as server failed. {excp.Message}");
+                    if (excp.InnerException is TimeoutException)
+                    {
+                        logger.LogWarning(excp, $"DTLS handshake as server timed out waiting for handshake to complete.");
+                    }
+                    else
+                    {
+                        logger.LogWarning(excp, $"DTLS handshake as server failed. {excp.Message}");
+                    }
 
                     // Declare handshake as failed
                     _handshakeComplete = false;
@@ -454,14 +469,17 @@ namespace SIPSorcery.Net
 
         public void WriteToRecvStream(byte[] buf)
         {
-            _chunks.Add(buf);
+            if (_isClosed)
+                return;
+
+            _chunks.Produce(buf);
         }
 
         public int Read(byte[] buffer, int offset, int count, int timeout)
         {
             try
             {
-                if (_chunks.TryTake(out var item, timeout))
+                if (_chunks.Consume(out var item, timeout))
                 {
                     Buffer.BlockCopy(item, 0, buffer, 0, item.Length);
                     return item.Length;
@@ -500,9 +518,13 @@ namespace SIPSorcery.Net
                     //Handle DTLS 1.3 Retransmission time (100 to 6000 ms)
                     //https://tools.ietf.org/id/draft-ietf-tls-dtls13-31.html#rfc.section.5.7
                     if (receiveLen == DTLS_RETRANSMISSION_CODE)
+                    {
                         _waitMillis = BackOff(_waitMillis);
+                    }
                     else
+                    {
                         _waitMillis = RetransmissionMilliseconds;
+                    }
 
                     return receiveLen;
                 }
@@ -517,7 +539,7 @@ namespace SIPSorcery.Net
             }
             else
             {
-                return DTLS_RECEIVE_ERROR_CODE;
+                throw new SocketException(DTLS_RECEIVE_ERROR_CODE);
             }
         }
 
