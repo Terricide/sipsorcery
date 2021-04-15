@@ -144,7 +144,7 @@ namespace SIPSorcery.Net
             {
                 throw new ApplicationException($"SDP media format IDs must be between 0 and {DYNAMIC_ID_MAX}.");
             }
-            else if (string.IsNullOrWhiteSpace(rtpmap))
+            else if (Extensions.IsNullOrWhiteSpace(rtpmap))
             {
                 throw new ArgumentNullException("rtpmap", "The rtpmap parameter cannot be empty for a dynamic SDPMediaFormat.");
             }
@@ -166,7 +166,7 @@ namespace SIPSorcery.Net
             {
                 throw new ApplicationException($"SDP media format ID must be between 0 and {DYNAMIC_ID_MAX}.");
             }
-            else if (string.IsNullOrWhiteSpace(name))
+            else if (Extensions.IsNullOrWhiteSpace(name))
             {
                 throw new ArgumentNullException("name", "The name parameter cannot be empty for a dynamic SDPMediaFormat.");
             }
@@ -281,7 +281,7 @@ namespace SIPSorcery.Net
                 return new AudioFormat(ID, name, clockRate, rtpClockRate, channels, Fmtp);
             }
             else if (ID < DYNAMIC_ID_MIN
-                && Enum.TryParse<SDPWellKnownMediaFormatsEnum>(Name(), out var wellKnownFormat)
+                && Extensions.TryParse<SDPWellKnownMediaFormatsEnum>(Name(), out var wellKnownFormat)
                 && AudioVideoWellKnown.WellKnownAudioFormats.ContainsKey(wellKnownFormat))
             {
                 return AudioVideoWellKnown.WellKnownAudioFormats[wellKnownFormat];
@@ -380,7 +380,7 @@ namespace SIPSorcery.Net
             clockRate = 0;
             channels = DEFAULT_AUDIO_CHANNEL_COUNT;
 
-            if (string.IsNullOrWhiteSpace(rtpmap))
+            if (Extensions.IsNullOrWhiteSpace(rtpmap))
             {
                 return false;
             }

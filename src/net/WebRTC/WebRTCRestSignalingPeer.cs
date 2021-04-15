@@ -86,17 +86,17 @@ namespace SIPSorcery.Net
             string theirID,
             Func<Task<RTCPeerConnection>> createPeerConnection)
         {
-            if (string.IsNullOrWhiteSpace(restServerUri))
+            if (Extensions.IsNullOrWhiteSpace(restServerUri))
             {
                 throw new ArgumentNullException($"The {nameof(restServerUri)} parameter must be set.");
             }
 
-            if (string.IsNullOrWhiteSpace(ourID))
+            if (Extensions.IsNullOrWhiteSpace(ourID))
             {
                 throw new ArgumentNullException(nameof(ourID));
             }
 
-            if (string.IsNullOrWhiteSpace(theirID))
+            if (Extensions.IsNullOrWhiteSpace(theirID))
             {
                 throw new ArgumentNullException(nameof(theirID));
             }
@@ -251,7 +251,7 @@ namespace SIPSorcery.Net
                 logger.LogDebug($"Got remote ICE candidate, {iceCandidateInit.candidate}");
 
                 bool useCandidate = true;
-                if (FilterRemoteICECandidates != null && !string.IsNullOrWhiteSpace(iceCandidateInit.candidate))
+                if (FilterRemoteICECandidates != null && !Extensions.IsNullOrWhiteSpace(iceCandidateInit.candidate))
                 {
                     useCandidate = FilterRemoteICECandidates(iceCandidateInit);
                 }

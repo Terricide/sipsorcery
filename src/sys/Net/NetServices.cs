@@ -172,7 +172,7 @@ namespace SIPSorcery.Sys
             {
                 throw new ApplicationException("A UDP socket cannot be created on an IPv6 address due to lack of OS support.");
             }
-            else if (bindAddress != null && bindAddress.AddressFamily == AddressFamily.InterNetwork && !Socket.OSSupportsIPv4)
+            else if (bindAddress != null && bindAddress.AddressFamily == AddressFamily.InterNetwork && !Extensions.OSSupportsIPv4)
             {
                 throw new ApplicationException("A UDP socket cannot be created on an IPv4 address due to lack of OS support.");
             }
@@ -240,7 +240,7 @@ namespace SIPSorcery.Sys
                         {
                             if (addressFamily == AddressFamily.InterNetworkV6)
                             {
-                                logger.LogDebug($"CreateBoundUdpSocket successfully bound on {socket.LocalEndPoint}, dual mode {socket.DualMode}.");
+                                logger.LogDebug($"CreateBoundUdpSocket successfully bound on {socket.LocalEndPoint}, dual mode {socket.DualMode()}.");
                             }
                             else
                             {
@@ -316,13 +316,13 @@ namespace SIPSorcery.Sys
             // See https://github.com/dotnet/runtime/issues/36618.
             if (port != 0 &&
                 socket.AddressFamily == AddressFamily.InterNetworkV6 &&
-                socket.DualMode && IPAddress.IPv6Any.Equals(bindAddress) &&
+                socket.DualMode() && IPAddress.IPv6Any.Equals(bindAddress) &&
                 Environment.OSVersion.Platform == PlatformID.Unix &&
                 RuntimeInformation.OSDescription.Contains("Microsoft"))
             {
                 // Create a dummy IPv4 socket and attempt to bind it to the same port
                 // to check the port isn't already in use.
-                if (Socket.OSSupportsIPv4)
+                if (Extensions.OSSupportsIPv4)
                 {
                     logger.LogDebug($"WSL detected, carrying out bind check on 0.0.0.0:{port}.");
 
@@ -352,11 +352,11 @@ namespace SIPSorcery.Sys
             {
                 if (!useDualMode)
                 {
-                    sock.DualMode = false;
+                    sock.DualMode(false);
                 }
                 else
                 {
-                    sock.DualMode = SupportsDualModeIPv4PacketInfo;
+                    sock.DualMode(SupportsDualModeIPv4PacketInfo);
                 }
             }
             return sock;
@@ -442,7 +442,7 @@ namespace SIPSorcery.Sys
             {
                 if (rtpSocket.LocalEndPoint.AddressFamily == AddressFamily.InterNetworkV6)
                 {
-                    logger.LogDebug($"Successfully bound RTP socket {rtpSocket.LocalEndPoint} (dual mode {rtpSocket.DualMode}) and control socket {controlSocket.LocalEndPoint} (dual mode {controlSocket.DualMode}).");
+                    logger.LogDebug($"Successfully bound RTP socket {rtpSocket.LocalEndPoint} (dual mode {rtpSocket.DualMode()}) and control socket {controlSocket.LocalEndPoint} (dual mode {controlSocket.DualMode()}).");
                 }
                 else
                 {
@@ -453,7 +453,7 @@ namespace SIPSorcery.Sys
             {
                 if (rtpSocket.LocalEndPoint.AddressFamily == AddressFamily.InterNetworkV6)
                 {
-                    logger.LogDebug($"Successfully bound RTP socket {rtpSocket.LocalEndPoint} (dual mode {rtpSocket.DualMode}).");
+                    logger.LogDebug($"Successfully bound RTP socket {rtpSocket.LocalEndPoint} (dual mode {rtpSocket.DualMode()}).");
                 }
                 else
                 {
@@ -485,7 +485,7 @@ namespace SIPSorcery.Sys
             else
             {
                 var testSocket = new Socket(AddressFamily.InterNetworkV6, SocketType.Dgram, ProtocolType.Udp);
-                testSocket.DualMode = true;
+                testSocket.DualMode(true);
 
                 try
                 {
@@ -543,7 +543,7 @@ namespace SIPSorcery.Sys
             {
                 IPAddress localAddress = null;
 
-                if (destination.AddressFamily == AddressFamily.InterNetwork || destination.IsIPv4MappedToIPv6)
+                if (destination.AddressFamily == AddressFamily.InterNetwork || destination.IsIPv4MappedToIPv6())
                 {
                     UdpClient udpClient = new UdpClient();
                     try

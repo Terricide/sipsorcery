@@ -161,9 +161,17 @@ namespace SIPSorcery.Net
         {
             var pkt = new SctpPacket();
             pkt.Header = SctpHeader.Parse(buffer, offset);
-            (pkt.Chunks, pkt.UnrecognisedChunks) = ParseChunks(buffer, offset, length);
+            var res = ParseChunks(buffer, offset, length);
+            pkt.Chunks = res.chunks;
+            pkt.UnrecognisedChunks = res.unrecognisedChunks;
 
             return pkt;
+        }
+
+        private struct ChunkPair
+        {
+            public List<SctpChunk> chunks;
+            public List<byte[]> unrecognisedChunks;
         }
 
         /// <summary>
@@ -173,7 +181,7 @@ namespace SIPSorcery.Net
         /// <param name="offset">The position in the buffer of the packet.</param>
         /// <param name="length">The length of the serialised packet in the buffer.</param>
         /// <returns>The lsit of parsed chunks and a list of unrecognised chunks that were not de-serialised.</returns>
-        private static (List<SctpChunk> chunks, List<byte[]> unrecognisedChunks) ParseChunks(byte[] buffer, int offset, int length)
+        private static ChunkPair ParseChunks(byte[] buffer, int offset, int length)
         {
             List<SctpChunk> chunks = new List<SctpChunk>();
             List<byte[]> unrecognisedChunks = new List<byte[]>();
@@ -219,7 +227,11 @@ namespace SIPSorcery.Net
                 posn += (int)SctpChunk.GetChunkLengthFromHeader(buffer, posn, true);
             }
 
-            return (chunks, unrecognisedChunks);
+            return new ChunkPair()
+            {
+                chunks = chunks,
+                unrecognisedChunks = unrecognisedChunks
+            };
         }
 
         /// <summary>

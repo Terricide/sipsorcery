@@ -423,7 +423,7 @@ namespace SIPSorcery.SIP.App
 
             string fromHeader = SIPConstants.SIP_DEFAULT_FROMURI;
 
-            if (!string.IsNullOrWhiteSpace(username))
+            if (!Extensions.IsNullOrWhiteSpace(username))
             {
                 // If the call needs to be authenticated the From header needs to be set
                 // with the username and domain to match the credentials.
@@ -1234,7 +1234,7 @@ namespace SIPSorcery.SIP.App
                         logger.LogError(excp, $"Exception SIPUserAgent.SIPTransportRequestReceived. {excp.Message}");
                     }
                 }
-                else if (sipRequest.Method == SIPMethodsEnum.INVITE && !string.IsNullOrWhiteSpace(sipRequest.Header.Replaces))
+                else if (sipRequest.Method == SIPMethodsEnum.INVITE && !Extensions.IsNullOrWhiteSpace(sipRequest.Header.Replaces))
                 {
                     // This is a special case of receiving an INVITE request that is part of an attended transfer and
                     // that if successful will replace the existing dialog.

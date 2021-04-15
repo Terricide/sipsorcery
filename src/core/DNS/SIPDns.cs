@@ -15,6 +15,7 @@
 //-----------------------------------------------------------------------------
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -100,7 +101,7 @@ namespace SIPSorcery.SIP
 
         public static SIPEndPoint ResolveFromCache(SIPURI uri, bool preferIPv6)
         {
-            if (uri == null || string.IsNullOrWhiteSpace(uri.MAddrOrHostAddress))
+            if (uri == null || Extensions.IsNullOrWhiteSpace(uri.MAddrOrHostAddress))
             {
                 throw new ArgumentNullException("uri", "SIP DNS resolve was supplied an empty input.");
             }
@@ -147,7 +148,7 @@ namespace SIPSorcery.SIP
         /// <returns>A SIPEndPoint or null.</returns>
         public static Task<SIPEndPoint> ResolveAsync(SIPURI uri, bool preferIPv6, CancellationToken ct)
         {
-            if (uri == null || string.IsNullOrWhiteSpace(uri.MAddrOrHostAddress))
+            if (uri == null || Extensions.IsNullOrWhiteSpace(uri.MAddrOrHostAddress))
             {
                 throw new ArgumentNullException("uri", "SIP DNS resolve was supplied an empty input.");
             }
@@ -382,7 +383,7 @@ namespace SIPSorcery.SIP
         /// </summary>
         /// <param name="srvResult">The DNS response from an SRV lookup.</param>
         /// <returns>The hostname and port for the chosen SRV result record.</returns>
-        private static (string, int) GetHostAndPortFromSrvResult(IDnsQueryResponse srvResult)
+        private static KeyValuePair<string, int> GetHostAndPortFromSrvResult(IDnsQueryResponse srvResult)
         {
             if (srvResult != null)
             {
@@ -394,7 +395,7 @@ namespace SIPSorcery.SIP
                 }
             }
 
-            return (null, 0);
+            return new KeyValuePair<string, int>(null, 0);
         }
 
         /// <summary>
@@ -402,18 +403,18 @@ namespace SIPSorcery.SIP
         /// </summary>
         /// <param name="serviceHostEntries">The DNS response from an SRV lookup.</param>
         /// <returns>The hostname and port for the chosen SRV result record.</returns>
-        private static (string, int) GetHostAndPortFromSrvResult(ServiceHostEntry[] serviceHostEntries)
+        private static KeyValuePair<string, int> GetHostAndPortFromSrvResult(ServiceHostEntry[] serviceHostEntries)
         {
             if (serviceHostEntries != null && serviceHostEntries.Length > 0)
             {
                 // TODO: Should be applying some randomisation logic here to take advantage if there are multiple SRV records.
                 var srvEntry = serviceHostEntries.OrderBy(y => y.Priority).ThenByDescending(w => w.Weight).FirstOrDefault();
 
-                return (srvEntry.HostName, srvEntry.Port);
+                return new KeyValuePair<string, int>(srvEntry.HostName, srvEntry.Port);
             }
             else
             {
-                return (null, 0);
+                return new KeyValuePair<string, int>(null, 0);
             }
         }
 

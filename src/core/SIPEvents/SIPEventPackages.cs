@@ -62,7 +62,7 @@ namespace SIPSorcery.SIP
 
         public static bool IsValid(string value)
         {
-            if (string.IsNullOrWhiteSpace(value))
+            if (Extensions.IsNullOrWhiteSpace(value))
             {
                 return false;
             }

@@ -222,7 +222,7 @@ namespace SIPSorcery.Sys
         public static bool Parse(string endpointstring, out string host, out int port)
         {
             bool rc = false;
-            if (string.IsNullOrWhiteSpace(endpointstring))
+            if (Extensions.IsNullOrWhiteSpace(endpointstring))
             {
                 throw new ArgumentException("Endpoint descriptor must not be empty.");
             }

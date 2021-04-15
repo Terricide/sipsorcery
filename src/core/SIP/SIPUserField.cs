@@ -70,7 +70,7 @@ namespace SIPSorcery.SIP
 
         public static SIPUserField ParseSIPUserField(string userFieldStr)
         {
-            if (string.IsNullOrWhiteSpace(userFieldStr))
+            if (Extensions.IsNullOrWhiteSpace(userFieldStr))
             {
                 throw new ArgumentException("A SIPUserField cannot be parsed from an empty string.");
             }

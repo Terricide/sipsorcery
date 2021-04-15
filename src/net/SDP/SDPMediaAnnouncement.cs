@@ -203,7 +203,7 @@ namespace SIPSorcery.Net
 
         public void ParseMediaFormats(string formatList)
         {
-            if (!String.IsNullOrWhiteSpace(formatList))
+            if (!Extensions.IsNullOrWhiteSpace(formatList))
             {
                 string[] formatIDs = Regex.Split(formatList, @"\s");
                 if (formatIDs != null)
@@ -221,7 +221,7 @@ namespace SIPSorcery.Net
                                 && id < SDPAudioVideoMediaFormat.DYNAMIC_ID_MIN)
                             {
                                 if (Enum.IsDefined(typeof(SDPWellKnownMediaFormatsEnum), id) &&
-                                    Enum.TryParse<SDPWellKnownMediaFormatsEnum>(formatID, out var wellKnown))
+                                    Extensions.TryParse<SDPWellKnownMediaFormatsEnum>(formatID, out var wellKnown))
                                 {
                                     MediaFormats.Add(id, new SDPAudioVideoMediaFormat(wellKnown));
                                 }
@@ -240,7 +240,7 @@ namespace SIPSorcery.Net
         {
             string announcement = "m=" + Media + " " + Port + " " + Transport + " " + GetFormatListToString() + m_CRLF;
 
-            announcement += !string.IsNullOrWhiteSpace(MediaDescription) ? "i=" + MediaDescription + m_CRLF : null;
+            announcement += !Extensions.IsNullOrWhiteSpace(MediaDescription) ? "i=" + MediaDescription + m_CRLF : null;
 
             announcement += (Connection == null) ? null : Connection.ToString();
 
@@ -254,9 +254,9 @@ namespace SIPSorcery.Net
                 announcement += "b=" + bandwidthAttribute + m_CRLF;
             }
 
-            announcement += !string.IsNullOrWhiteSpace(IceUfrag) ? "a=" + SDP.ICE_UFRAG_ATTRIBUTE_PREFIX + ":" + IceUfrag + m_CRLF : null;
-            announcement += !string.IsNullOrWhiteSpace(IcePwd) ? "a=" + SDP.ICE_PWD_ATTRIBUTE_PREFIX + ":" + IcePwd + m_CRLF : null;
-            announcement += !string.IsNullOrWhiteSpace(DtlsFingerprint) ? "a=" + SDP.DTLS_FINGERPRINT_ATTRIBUTE_PREFIX + ":" + DtlsFingerprint + m_CRLF : null;
+            announcement += !Extensions.IsNullOrWhiteSpace(IceUfrag) ? "a=" + SDP.ICE_UFRAG_ATTRIBUTE_PREFIX + ":" + IceUfrag + m_CRLF : null;
+            announcement += !Extensions.IsNullOrWhiteSpace(IcePwd) ? "a=" + SDP.ICE_PWD_ATTRIBUTE_PREFIX + ":" + IcePwd + m_CRLF : null;
+            announcement += !Extensions.IsNullOrWhiteSpace(DtlsFingerprint) ? "a=" + SDP.DTLS_FINGERPRINT_ATTRIBUTE_PREFIX + ":" + DtlsFingerprint + m_CRLF : null;
 
             if (IceCandidates?.Count() > 0)
             {
@@ -276,13 +276,13 @@ namespace SIPSorcery.Net
                 announcement += $"a={SDP.END_ICE_CANDIDATES_ATTRIBUTE}" + m_CRLF;
             }
 
-            announcement += !string.IsNullOrWhiteSpace(MediaID) ? "a=" + SDP.MEDIA_ID_ATTRIBUTE_PREFIX + ":" + MediaID + m_CRLF : null;
+            announcement += !Extensions.IsNullOrWhiteSpace(MediaID) ? "a=" + SDP.MEDIA_ID_ATTRIBUTE_PREFIX + ":" + MediaID + m_CRLF : null;
 
             announcement += GetFormatListAttributesToString();
 
             foreach (string extra in ExtraMediaAttributes)
             {
-                announcement += string.IsNullOrWhiteSpace(extra) ? null : extra + m_CRLF;
+                announcement += Extensions.IsNullOrWhiteSpace(extra) ? null : extra + m_CRLF;
             }
 
             foreach (SDPSecurityDescription desc in this.SecurityDescriptions)
@@ -309,7 +309,7 @@ namespace SIPSorcery.Net
             {
                 foreach (var ssrcAttr in SsrcAttributes)
                 {
-                    if (!string.IsNullOrWhiteSpace(ssrcAttr.Cname))
+                    if (!Extensions.IsNullOrWhiteSpace(ssrcAttr.Cname))
                     {
                         announcement += $"{MEDIA_FORMAT_SSRC_ATTRIBUE_PREFIX}{ssrcAttr.SSRC} {SDPSsrcAttribute.MEDIA_CNAME_ATTRIBUE_PREFIX}:{ssrcAttr.Cname}" + m_CRLF;
                     }
@@ -427,7 +427,7 @@ namespace SIPSorcery.Net
 
         public void AddExtra(string attribute)
         {
-            if (!string.IsNullOrWhiteSpace(attribute))
+            if (!Extensions.IsNullOrWhiteSpace(attribute))
             {
                 ExtraMediaAttributes.Add(attribute);
             }

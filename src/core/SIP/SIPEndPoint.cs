@@ -104,7 +104,7 @@ namespace SIPSorcery.SIP
         public SIPEndPoint(SIPProtocolsEnum protocol, IPAddress address, int port, string channelID, string connectionID)
         {
             Protocol = protocol;
-            Address = address?.IsIPv4MappedToIPv6 == true ? address.MapToIPv4() : address;
+            Address = address?.IsIPv4MappedToIPv6() == true ? address.MapToIPv4() : address;
             Port = (port == 0) ? SIPConstants.GetDefaultPort(Protocol) : port;
             ChannelID = channelID;
             ConnectionID = connectionID;
@@ -119,7 +119,7 @@ namespace SIPSorcery.SIP
                 throw new ApplicationException($"Could not parse SIPURI host {sipURI.Host} as an IP end point.");
             }
 
-            Address = endPoint.Address?.IsIPv4MappedToIPv6 == true ? endPoint.Address.MapToIPv4() : endPoint.Address;
+            Address = endPoint.Address?.IsIPv4MappedToIPv6() == true ? endPoint.Address.MapToIPv4() : endPoint.Address;
             Port = (endPoint.Port == 0) ? SIPConstants.GetDefaultPort(Protocol) : endPoint.Port;
         }
 
@@ -314,8 +314,8 @@ namespace SIPSorcery.SIP
             }
             else
             {
-                var ep1Address = (endPoint1.Address.IsIPv4MappedToIPv6) ? endPoint1.Address.MapToIPv4() : endPoint1.Address;
-                var ep2Address = (endPoint2.Address.IsIPv4MappedToIPv6) ? endPoint2.Address.MapToIPv4() : endPoint2.Address;
+                var ep1Address = (endPoint1.Address.IsIPv4MappedToIPv6()) ? endPoint1.Address.MapToIPv4() : endPoint1.Address;
+                var ep2Address = (endPoint2.Address.IsIPv4MappedToIPv6()) ? endPoint2.Address.MapToIPv4() : endPoint2.Address;
 
                 return endPoint1.Protocol == endPoint2.Protocol &&
                     endPoint1.Port == endPoint2.Port &&

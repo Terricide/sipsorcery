@@ -271,11 +271,11 @@ namespace SIPSorcery.Net
                 {
                     // This is a data chunk fragment.
                     _fragmentedChunks.Add(dataChunk.TSN, dataChunk);
-                    (var begin, var end) = GetChunkBeginAndEnd(_fragmentedChunks, dataChunk.TSN);
+                    var kv = GetChunkBeginAndEnd(_fragmentedChunks, dataChunk.TSN);
 
-                    if (begin != null && end != null)
+                    if (kv.Key != null && kv.Value != null)
                     {
-                        frame = GetFragmentedChunk(_fragmentedChunks, begin.Value, end.Value);
+                        frame = GetFragmentedChunk(_fragmentedChunks, kv.Key.Value, kv.Value.Value);
                     }
                 }
             }
@@ -451,7 +451,7 @@ namespace SIPSorcery.Net
         /// <param name="fragments">The dictionary containing the chunk fragments.</param>
         /// <returns>If the chunk is complete the begin and end TSNs will be returned. If
         /// the fragmented chunk is incomplete one or both of the begin and/or end TSNs will be null.</returns>
-        private (uint?, uint?) GetChunkBeginAndEnd(Dictionary<uint, SctpDataChunk> fragments, uint tsn)
+        private KeyValuePair<uint?, uint?> GetChunkBeginAndEnd(Dictionary<uint, SctpDataChunk> fragments, uint tsn)
         {
             unchecked
             {
@@ -487,7 +487,7 @@ namespace SIPSorcery.Net
                     }
                 }
 
-                return (beginTSN, endTSN);
+                return new KeyValuePair<uint?, uint?>(beginTSN, endTSN);
             }
         }
 

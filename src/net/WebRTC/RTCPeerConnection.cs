@@ -104,7 +104,7 @@ namespace SIPSorcery.Net
         {
             init = null;
 
-            if (string.IsNullOrWhiteSpace(json))
+            if (Extensions.IsNullOrWhiteSpace(json))
             {
                 return false;
             }
@@ -426,7 +426,9 @@ namespace SIPSorcery.Net
             if (_dtlsCertificate == null)
             {
                 // No certificate was provided so create a new self signed one.
-                (_dtlsCertificate, _dtlsPrivateKey) = DtlsUtils.CreateSelfSignedTlsCert();
+                var certPair = DtlsUtils.CreateSelfSignedTlsCert();
+                _dtlsCertificate = certPair.Certificate;
+                _dtlsPrivateKey = certPair.PrivateKey;
             }
 
             DtlsCertificateFingerprint = DtlsUtils.Fingerprint(_dtlsCertificate);
@@ -711,7 +713,7 @@ namespace SIPSorcery.Net
                     _rtpIceChannel.SetRemoteCredentials(remoteIceUser, remoteIcePassword);
                 }
 
-                if (!string.IsNullOrWhiteSpace(dtlsFingerprint))
+                if (!Extensions.IsNullOrWhiteSpace(dtlsFingerprint))
                 {
                     dtlsFingerprint = dtlsFingerprint.Trim().ToLower();
                     if (RTCDtlsFingerprint.TryParse(dtlsFingerprint, out var remoteFingerprint))

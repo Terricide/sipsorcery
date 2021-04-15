@@ -152,7 +152,7 @@ namespace SIPSorcery.Net
                     }
                     else
                     {
-                        if (!Enum.TryParse<STUNSchemesEnum>(schemeStr.Substring(0, colonPosn), true, out stunUri.Scheme))
+                        if (!Extensions.TryParse<STUNSchemesEnum>(schemeStr.Substring(0, colonPosn), true, out stunUri.Scheme))
                         {
                             stunUri.Scheme = DefaultSTUNScheme;
                         }

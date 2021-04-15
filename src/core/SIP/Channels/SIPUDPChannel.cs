@@ -77,7 +77,7 @@ namespace SIPSorcery.SIP
             
             if(ListeningIPAddress.AddressFamily == AddressFamily.InterNetworkV6)
             {
-                m_isDualMode = m_udpSocket.DualMode;
+                m_isDualMode = m_udpSocket.DualMode();
             }
 
             m_recvBuffer = new byte[SIPConstants.SIP_MAXIMUM_RECEIVE_LENGTH];

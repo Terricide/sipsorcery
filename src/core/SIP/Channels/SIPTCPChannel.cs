@@ -124,7 +124,7 @@ namespace SIPSorcery.SIP
             if (useDualMode && endPoint.AddressFamily == AddressFamily.InterNetworkV6)
             {
                 m_isDualMode = true;
-                m_channelSocket.DualMode = true;
+                m_channelSocket.DualMode(true);
             }
 
             m_channelSocket.Bind(endPoint);
@@ -325,7 +325,7 @@ namespace SIPSorcery.SIP
 
                 if (m_isDualMode && ListeningIPAddress.AddressFamily == AddressFamily.InterNetworkV6)
                 {
-                    clientSocket.DualMode = true;
+                    clientSocket.DualMode(true);
                 }
 
                 clientSocket.Bind(ListeningEndPoint);

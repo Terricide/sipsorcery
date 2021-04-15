@@ -1790,7 +1790,7 @@ namespace SIPSorcery.Net
         /// <param name="buffer">The data received.</param>
         protected void OnReceive(int localPort, IPEndPoint remoteEndPoint, byte[] buffer)
         {
-            if (remoteEndPoint.Address.IsIPv4MappedToIPv6)
+            if (remoteEndPoint.Address.IsIPv4MappedToIPv6())
             {
                 // Required for matching existing RTP end points (typically set from SDP) and
                 // whether or not the destination end point should be switched.

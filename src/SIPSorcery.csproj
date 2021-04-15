@@ -15,13 +15,31 @@
     <EmbeddedResource Include="media\testpattern.i420" />
     <None Include="icon.png" Pack="true" PackagePath="" />
   </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="Portable.BouncyCastle" Version="1.8.9" />
-    <PackageReference Include="DnsClient" Version="1.4.0" />
-    <PackageReference Include="SIPSorcery.WebSocketSharp" Version="0.0.1" />
-    <PackageReference Include="SIPSorceryMedia.Abstractions" Version="1.1.0" />
+  
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0' OR '$(TargetFramework)' == 'net472' OR '$(TargetFramework)' == 'net5.0'">
+    <PackageReference Include="Portable.BouncyCastle" Version="1.8.8" />
+    <PackageReference Include="Newtonsoft.Json" Version="12.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="5.0.0" />
+    <PackageReference Include="System.Runtime.InteropServices.RuntimeInformation" Version="4.3.0" />
+    <PackageReference Include="System.ValueTuple" Version="4.5.0" />
     <PackageReference Include="System.Net.WebSockets.Client" Version="4.3.2" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net472'">
+    <PackageReference Include="System.Net.Http" />
+  </ItemGroup>
+  
+  <ItemGroup Condition="'$(TargetFramework)' == 'net20'">
+    <PackageReference Include="BouncyCastle" Version="1.8.6.1" />
+    <Reference Include="MonoLib">
+      <HintPath>..\..\Vcms\Verismic.Common\Libraries\Builds\MonoLib.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  
+  <ItemGroup>
+    <ProjectReference Include="..\..\DnsClient.NET\src\DnsClient\DnsClient.csproj" />
+    <ProjectReference Include="..\..\SIPSorceryMedia.Abstractions\src\SIPSorceryMedia.Abstractions.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -30,7 +48,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <TargetFrameworks>netstandard2.0;net461;net5.0</TargetFrameworks>
+    <TargetFrameworks>netstandard2.0;net472;net5.0;net20</TargetFrameworks>
     <Authors>Aaron Clauson &amp; Contributors</Authors>
     <Copyright>Copyright © 2010-2021 Aaron Clauson</Copyright>
     <PackageLicenseExpression>BSD-3-Clause</PackageLicenseExpression>

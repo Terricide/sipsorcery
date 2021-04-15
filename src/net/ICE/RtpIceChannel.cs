@@ -465,7 +465,7 @@ namespace SIPSorcery.Net
         /// <param name="candidate">An ICE candidate from the remote party.</param>
         public void AddRemoteCandidate(RTCIceCandidate candidate)
         {
-            if (candidate == null || string.IsNullOrWhiteSpace(candidate.address))
+            if (candidate == null || Extensions.IsNullOrWhiteSpace(candidate.address))
             {
                 // Note that the way ICE signals the end of the gathering stage is to send
                 // an empty candidate or "end-of-candidates" SDP attribute.
@@ -597,18 +597,18 @@ namespace SIPSorcery.Net
             List<IPAddress> localAddresses = null;
             if (IPAddress.IPv6Any.Equals(rtpBindAddress))
             {
-                if (base.RtpSocket.DualMode)
+                if (base.RtpSocket.DualMode())
                 {
                     // IPv6 dual mode listening on [::] means we can use all valid local addresses.
                     localAddresses = NetServices.GetLocalAddressesOnInterface(_bindAddress, _includeAllInterfaceAddresses)
-                        .Where(x => !IPAddress.IsLoopback(x) && !x.IsIPv4MappedToIPv6 && !x.IsIPv6SiteLocal && !x.IsIPv6LinkLocal).ToList();
+                        .Where(x => !IPAddress.IsLoopback(x) && !x.IsIPv4MappedToIPv6() && !x.IsIPv6SiteLocal && !x.IsIPv6LinkLocal).ToList();
                 }
                 else
                 {
                     // IPv6 but not dual mode on [::] means can use all valid local IPv6 addresses.
                     localAddresses = NetServices.GetLocalAddressesOnInterface(_bindAddress, _includeAllInterfaceAddresses)
                         .Where(x => x.AddressFamily == AddressFamily.InterNetworkV6
-                        && !IPAddress.IsLoopback(x) && !x.IsIPv4MappedToIPv6 && !x.IsIPv6SiteLocal && !x.IsIPv6LinkLocal).ToList();
+                        && !IPAddress.IsLoopback(x) && !x.IsIPv4MappedToIPv6() && !x.IsIPv6SiteLocal && !x.IsIPv6LinkLocal).ToList();
                 }
             }
             else if (IPAddress.Any.Equals(rtpBindAddress))
@@ -662,7 +662,7 @@ namespace SIPSorcery.Net
 
                 foreach (string url in urls)
                 {
-                    if (!String.IsNullOrWhiteSpace(url))
+                    if (!Extensions.IsNullOrWhiteSpace(url))
                     {
                         if (STUNUri.TryParse(url, out var stunUri))
                         {
@@ -1430,7 +1430,7 @@ namespace SIPSorcery.Net
                 return;
             }
 
-            remoteEndPoint = (!remoteEndPoint.Address.IsIPv4MappedToIPv6) ? remoteEndPoint : new IPEndPoint(remoteEndPoint.Address.MapToIPv4(), remoteEndPoint.Port);
+            remoteEndPoint = (!remoteEndPoint.Address.IsIPv4MappedToIPv6()) ? remoteEndPoint : new IPEndPoint(remoteEndPoint.Address.MapToIPv4(), remoteEndPoint.Port);
 
             OnStunMessageReceived?.Invoke(stunMessage, remoteEndPoint, wasRelayed);
 
