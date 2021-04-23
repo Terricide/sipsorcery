@@ -160,9 +160,9 @@ namespace SIPSorcery.Net
         private async Task SendToSignalingServer(HttpClient httpClient, string jsonStr, WebRTCSignalTypesEnum sendType)
         {
             var content = new StringContent(jsonStr, Encoding.UTF8, "application/json");
-            var res = await httpClient.PutAsync($"{_restServerUri}/{sendType}/{_ourID}/{_theirID}", content).ConfigureAwait(false);
+            //var res = await httpClient.PutAsync($"{_restServerUri}/{sendType}/{_ourID}/{_theirID}", content).ConfigureAwait(false);
 
-            logger.LogDebug($"webrtc-rest PUT result for {_restServerUri}/{sendType}/{_ourID}/{_theirID} {res.StatusCode}.");
+            //logger.LogDebug($"webrtc-rest PUT result for {_restServerUri}/{sendType}/{_ourID}/{_theirID} {res.StatusCode}.");
         }
 
         private async Task ReceiveFromNSS(HttpClient httpClient, RTCPeerConnection pc, CancellationToken ct)
