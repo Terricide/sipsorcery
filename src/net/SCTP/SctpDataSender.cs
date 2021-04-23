@@ -145,6 +145,11 @@ namespace SIPSorcery.Net
         internal ConcurrentDictionary<uint, int> _missingChunks = new ConcurrentDictionary<uint, int>();
 
         /// <summary>
+        /// The total size (in bytes) of queued user data that will be sent to the peer.
+        /// </summary>
+        public ulong BufferedAmount => (ulong)_sendQueue.Sum(x => x.UserData?.Length ?? 0);
+
+        /// <summary>
         /// The Transaction Sequence Number (TSN) that will be used in the next DATA chunk sent.
         /// </summary>
         public uint TSN { get; internal set; }
@@ -191,9 +196,9 @@ namespace SIPSorcery.Net
                     uint maxTSNDistance = SctpDataReceiver.GetDistance(_cumulativeAckTSN, TSN);
                     bool processGapReports = true;
 
-                    if (_unconfirmedChunks.ContainsKey(sack.CumulativeTsnAck))
+                    if (_unconfirmedChunks.TryGetValue(sack.CumulativeTsnAck, out var result))
                     {
-                        _lastAckedDataChunkSize = _unconfirmedChunks[sack.CumulativeTsnAck].UserData.Length;
+                        _lastAckedDataChunkSize = result.UserData.Length;
                     }
 
                     if (!_gotFirstSACK)
@@ -451,10 +456,8 @@ namespace SIPSorcery.Net
 
                     while (chunksSent < burstSize && haveMissing)
                     {
-                        if (_unconfirmedChunks.ContainsKey(misses.Current.Key))
+                        if (_unconfirmedChunks.TryGetValue(misses.Current.Key, out var missingChunk))
                         {
-                            var missingChunk = _unconfirmedChunks[misses.Current.Key];
-
                             missingChunk.LastSentAt = now;
                             missingChunk.SendCount += 1;
 
