@@ -119,13 +119,14 @@
 
 //            _pc = await CreatePeerConnection().ConfigureAwait(false);
 
-//            _pc.onicecandidate += (iceCandidate) =>
-//            {
-//                if (_pc.signalingState == RTCSignalingState.have_remote_offer)
-//                {
-//                    Context.WebSocket.Send(iceCandidate.toJSON());
-//                }
-//            };
+            //_pc.onicecandidate += (iceCandidate) =>
+            //{
+            //    if (_pc.signalingState == RTCSignalingState.have_remote_offer ||
+            //        _pc.signalingState == RTCSignalingState.stable)
+            //    {
+            //        Context.WebSocket.Send(iceCandidate.toJSON());
+            //    }
+            //};
 
 //            if (base.Context.QueryString["role"] != "offer")
 //            {

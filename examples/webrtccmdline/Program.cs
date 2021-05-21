@@ -272,7 +272,7 @@ namespace SIPSorcery.Examples
                 }
                 await webrtcRestPeer.Start(exitCts);
             }
-            else if(options.EchoServer != null)
+            else if (options.EchoServer != null)
             {
                 // Create offer and send to echo server.
                 var pc = await Createpc(null, _stunServer, _relayOnly);
@@ -508,7 +508,7 @@ namespace SIPSorcery.Examples
 
         private static Task<RTCPeerConnection> CreatePeerConnection()
         {
-            return Createpc(null, _stunServer, false);
+            return Createpc(null, _stunServer, _relayOnly);
         }
 
         private static Task<RTCPeerConnection> Createpc(WebSocketContext context, RTCIceServer stunServer, bool relayOnly)
@@ -540,8 +540,8 @@ namespace SIPSorcery.Examples
             _peerConnection.GetRtpChannel().MdnsResolve = MdnsResolve;
             //_peerConnection.GetRtpChannel().OnStunMessageReceived += (msg, ep, isrelay) => logger.LogDebug($"STUN message received from {ep}, message type {msg.Header.MessageType}.");
 
-            //var dc = _peerConnection.createDataChannel(DATA_CHANNEL_LABEL, null);
-            //dc.onmessage += (msg) => logger.LogDebug($"data channel receive ({dc.label}-{dc.id}): {msg}");
+            var dc = _peerConnection.createDataChannel(DATA_CHANNEL_LABEL, null);
+            //dc. += (msg) => logger.LogDebug($"data channel receive ({dc.label}-{dc.id}): {msg}");
 
             // Add a send-only audio track (this doesn't require any native libraries for encoding so is good for x-platform testing).
             AudioExtrasSource audioSource = new AudioExtrasSource(new AudioEncoder(), new AudioSourceOptions { AudioSource = AudioSourcesEnum.Music });
@@ -553,6 +553,7 @@ namespace SIPSorcery.Examples
             _peerConnection.OnAudioFormatsNegotiated += (formats) =>
                 audioSource.SetAudioSourceFormat(formats.First());
 
+            _peerConnection.onicecandidate += (candidate) => logger.LogDebug($"onicecandidate {candidate}");
             _peerConnection.onicecandidateerror += (candidate, error) => logger.LogWarning($"Error adding remote ICE candidate. {error} {candidate}");
             _peerConnection.onconnectionstatechange += async (state) =>
             {
@@ -584,18 +585,27 @@ namespace SIPSorcery.Examples
                 logger.LogDebug($"Data channel opened by remote peer, label {dc.label}, stream ID {dc.id}.");
                 dc.onmessage += (dc, protocol, data) =>
                 {
-                    logger.LogDebug($"data channel ({dc.label}:{dc.id}): {Encoding.UTF8.GetString(data)}.");
+                    if (protocol == DataChannelPayloadProtocols.WebRTC_String ||
+                        protocol == DataChannelPayloadProtocols.WebRTC_String_Partial)
+                    {
+                        logger.LogDebug($"data channel ({dc.label}:{dc.id}): {Encoding.UTF8.GetString(data)}.");
+                        dc.send($"echo: {Encoding.UTF8.GetString(data)}");
+                    }
+                    else
+                    {
+                        logger.LogDebug($"data channel ({dc.label}:{dc.id}): received {dc.protocol} message, length {data?.Length} bytes.");
+                    }
                 };
             };
 
             _peerConnection.onsignalingstatechange += () =>
             {
-                if(_peerConnection.signalingState == RTCSignalingState.have_remote_offer)
+                if (_peerConnection.signalingState == RTCSignalingState.have_remote_offer)
                 {
                     logger.LogDebug("Remote SDP:");
                     logger.LogDebug(_peerConnection.remoteDescription.sdp.ToString());
                 }
-                else if(_peerConnection.signalingState == RTCSignalingState.have_local_offer)
+                else if (_peerConnection.signalingState == RTCSignalingState.have_local_offer)
                 {
                     logger.LogDebug("Local SDP:");
                     logger.LogDebug(_peerConnection.localDescription.sdp.ToString());

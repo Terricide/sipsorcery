@@ -24,11 +24,13 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using SIPSorcery.App.SIPUserAgents.Behaviours;
 using SIPSorcery.Net;
 using SIPSorcery.Sys;
 
@@ -77,6 +79,12 @@ namespace SIPSorcery.SIP.App
         private readonly bool m_isTransportExclusive;
 
         /// <summary>
+        /// The SIP account used by the server user agent and this user agent 
+        /// for authentication challenges
+        /// </summary>
+        private readonly ISIPAccount m_answerSipAccount;
+
+        /// <summary>
         /// If set all communications are sent to this address irrespective of what the 
         /// request and response headers indicate.
         /// </summary>
@@ -87,12 +95,6 @@ namespace SIPSorcery.SIP.App
         /// resultant dialogue.
         /// </summary>
         private SIPDialogue m_sipDialogue;
-
-        /// <summary>
-        /// When a call is hungup a reference is kept to the BYE transaction so it can
-        /// be monitored for delivery.
-        /// </summary>
-        private SIPNonInviteTransaction m_byeTransaction;
 
         /// <summary>
         /// Holds the call descriptor for an in progress client (outbound) call.
@@ -119,6 +121,12 @@ namespace SIPSorcery.SIP.App
         /// required.
         /// </summary>
         private bool _isClosed;
+
+        /// <summary>
+        /// This timer is used when an outgoing call is made with a ring timeout specified.
+        /// If the call is not answered within the timeout it will be cancelled by this agent.
+        /// </summary>
+        private Timer _ringTimeout;
 
         /// <summary>
         /// The media (RTP) session in use for the current call.
@@ -185,7 +193,7 @@ namespace SIPSorcery.SIP.App
                 {
                     return true;
                 }
-                else if (m_byeTransaction != null && m_byeTransaction.DeliveryPending)
+                else if ((m_uac != null && m_uac.IsHangingUp) || (m_uas != null && m_uas.IsHangingUp))
                 {
                     return true;
                 }
@@ -391,12 +399,14 @@ namespace SIPSorcery.SIP.App
         /// end point irrespective of their headers.</param>
         /// <param name="isTransportExclusive">True is the SIP transport instance is for the exclusive use of 
         /// this user agent or false if it's being shared amongst multiple agents.</param>
-        public SIPUserAgent(SIPTransport transport, SIPEndPoint outboundProxy, bool isTransportExclusive = false)
+        /// <param name="answerSipAccount">Optional, will ensure that any request that require auth will be able to complete</param>
+        public SIPUserAgent(SIPTransport transport, SIPEndPoint outboundProxy, bool isTransportExclusive = false, ISIPAccount answerSipAccount = null)
         {
             m_transport = transport;
             m_outboundProxy = outboundProxy;
             m_isTransportExclusive = isTransportExclusive;
             m_transport.SIPTransportRequestReceived += SIPTransportRequestReceived;
+            m_answerSipAccount = answerSipAccount;
         }
 
         /// <summary>
@@ -409,7 +419,9 @@ namespace SIPSorcery.SIP.App
         /// <param name="username">Optional Username if authentication is required.</param>
         /// <param name="password">Optional. Password if authentication is required.</param>
         /// <param name="mediaSession">The RTP session for the call.</param>
-        public Task<bool> Call(string dst, string username, string password, IMediaSession mediaSession)
+        /// <param name="ringTimeout">Optional. If non-zero will be treated as the number of seconds to let the call
+        /// ring for before giving up and cancelling.</param>
+        public Task<bool> Call(string dst, string username, string password, IMediaSession mediaSession, int ringTimeout = 0)
         {
             if (mediaSession == null)
             {
@@ -442,7 +454,7 @@ namespace SIPSorcery.SIP.App
                null,
                null);
 
-            return Call(callDescriptor, mediaSession);
+            return Call(callDescriptor, mediaSession, ringTimeout);
         }
 
         /// <summary>
@@ -454,14 +466,16 @@ namespace SIPSorcery.SIP.App
         /// <param name="callDescriptor">The full descriptor for the call destination. Allows customising
         /// of additional options above the standard username, password and destination URI.</param>
         /// <param name="mediaSession">The RTP session for the call.</param>
-        public async Task<bool> Call(SIPCallDescriptor callDescriptor, IMediaSession mediaSession)
+        /// <param name="ringTimeout">Optional. If non-zero will be treated as the number of seconds to let the call
+        /// ring for before giving up and cancelling.</param>
+        public async Task<bool> Call(SIPCallDescriptor callDescriptor, IMediaSession mediaSession, int ringTimeout = 0)
         {
             TaskCompletionSource<bool> callResult = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             ClientCallAnswered += (uac, resp) => callResult.TrySetResult(true);
             ClientCallFailed += (uac, errorMessage, result) => callResult.TrySetResult(false);
 
-            await InitiateCallAsync(callDescriptor, mediaSession).ConfigureAwait(false);
+            await InitiateCallAsync(callDescriptor, mediaSession, ringTimeout).ConfigureAwait(false);
 
             return await callResult.Task.ConfigureAwait(false);
         }
@@ -472,7 +486,9 @@ namespace SIPSorcery.SIP.App
         /// <param name="sipCallDescriptor">A call descriptor containing the information about how 
         /// and where to place the call.</param>
         /// <param name="mediaSession">The media session used for this call</param>
-        public async Task InitiateCallAsync(SIPCallDescriptor sipCallDescriptor, IMediaSession mediaSession)
+        /// <param name="ringTimeout">Optional. If non-zero will be treated as the number of seconds to let the call
+        /// ring for before giving up and cancelling.</param>
+        public async Task InitiateCallAsync(SIPCallDescriptor sipCallDescriptor, IMediaSession mediaSession, int ringTimeout = 0)
         {
             m_cts = new CancellationTokenSource();
 
@@ -503,6 +519,13 @@ namespace SIPSorcery.SIP.App
                 else
                 {
                     sipCallDescriptor.Content = sdp.ToString();
+
+                    if(ringTimeout > 0)
+                    {
+                        logger.LogDebug($"Setting ring timeout of {ringTimeout}s.");
+                        _ringTimeout = new Timer((state) => m_uac?.Cancel(), null, ringTimeout * 1000, Timeout.Infinite);
+                    }
+
                     // This initiates the call but does not wait for an answer.
                     m_uac.Call(sipCallDescriptor, serverEndPoint);
                 }
@@ -551,10 +574,13 @@ namespace SIPSorcery.SIP.App
                     MediaSession?.Close("call hungup");
                 }
 
-                if (m_sipDialogue != null && m_sipDialogue.DialogueState != SIPDialogueStateEnum.Terminated)
+                if (m_uac != null)
                 {
-                    m_sipDialogue.Hangup(m_transport, m_outboundProxy);
-                    m_byeTransaction = m_sipDialogue.m_byeTransaction;
+                    m_uac.Hangup();
+                }
+                else if (m_uas != null)
+                {
+                    m_uas.Hangup(false);
                 }
 
                 IsOnLocalHold = false;
@@ -576,7 +602,7 @@ namespace SIPSorcery.SIP.App
         public SIPServerUserAgent AcceptCall(SIPRequest inviteRequest)
         {
             UASInviteTransaction uasTransaction = new UASInviteTransaction(m_transport, inviteRequest, m_outboundProxy);
-            SIPServerUserAgent uas = new SIPServerUserAgent(m_transport, m_outboundProxy, uasTransaction, null);
+            SIPServerUserAgent uas = new SIPServerUserAgent(m_transport, m_outboundProxy, uasTransaction, m_answerSipAccount);
             uas.ClientTransaction.TransactionStateChanged += (tx) => OnTransactionStateChange?.Invoke(tx);
             uas.ClientTransaction.TransactionTraceMessage += (tx, msg) => OnTransactionTraceMessage?.Invoke(tx, msg);
             uas.CallCancelled += (pendingUas) =>
@@ -1202,8 +1228,8 @@ namespace SIPSorcery.SIP.App
                 }
 
                 UACInviteTransaction reinviteTransaction = new UACInviteTransaction(m_transport, reinviteRequest, m_outboundProxy);
-                reinviteTransaction.SendInviteRequest();
                 reinviteTransaction.UACInviteTransactionFinalResponseReceived += ReinviteRequestFinalResponseReceived;
+                reinviteTransaction.SendInviteRequest();
             }
         }
 
@@ -1382,6 +1408,16 @@ namespace SIPSorcery.SIP.App
                     MediaSession.SetRemoteDescription(SdpType.answer, SDP.ParseSDPDescription(sipResponse.Body));
                 }
             }
+            else if ((sipResponse.Status == SIPResponseStatusCodesEnum.ProxyAuthenticationRequired || sipResponse.Status == SIPResponseStatusCodesEnum.Unauthorised) && m_callDescriptor != null)
+            {
+                var (username, password) = GetUsernameAndPassword();
+                if (username != null)
+                {
+                    var updatedSipRequest = SIPAuthChallenge.AddAuthenticationHeaderToRequest(sipTransaction.TransactionRequest, sipResponse, username, password);
+                    UACInviteTransaction authenticateInviteTransaction = new UACInviteTransaction(m_transport, updatedSipRequest, null);
+                    authenticateInviteTransaction.SendInviteRequest();
+                }
+            }
             else
             {
                 logger.LogWarning($"Re-INVITE request failed with response {sipResponse.ShortDescription}.");
@@ -1389,6 +1425,26 @@ namespace SIPSorcery.SIP.App
 
             return Task.FromResult(SocketError.Success);
         }
+
+        private (string, string) GetUsernameAndPassword()
+        {
+            string username = null;
+            string password = null;
+            // If we created the call, use the call descriptor
+            if (m_callDescriptor != null)
+            {
+                username = string.IsNullOrWhiteSpace(m_callDescriptor.AuthUsername) ? m_callDescriptor.Username : m_callDescriptor.AuthUsername;
+                password = m_callDescriptor.Password;
+            }
+            // Otherwise, use the sip account if we answered a call
+            else if (m_answerSipAccount != null)
+            {
+                username = m_answerSipAccount.SIPUsername;
+                password = m_answerSipAccount.SIPPassword;
+            }
+            return (username, password);
+        }
+
 
         /// <summary>
         /// Takes care of sending a response based on whether the outbound proxy is set or not.
@@ -1462,6 +1518,8 @@ namespace SIPSorcery.SIP.App
         {
             logger.LogWarning($"Call attempt to {m_uac.CallDescriptor?.Uri} failed with {errorMessage}.");
 
+            _ringTimeout?.Dispose();
+
             ClientCallFailed?.Invoke(uac, errorMessage, sipResponse);
         }
 
@@ -1472,6 +1530,8 @@ namespace SIPSorcery.SIP.App
         /// <param name="sipResponse">The INVITE success response.</param>
         private async void ClientCallAnsweredHandler(ISIPClientUserAgent uac, SIPResponse sipResponse)
         {
+            _ringTimeout?.Dispose();
+
             if (sipResponse.StatusCode >= 200 && sipResponse.StatusCode <= 299)
             {
                 if (sipResponse.Body == null && ((MediaSession as RTPSession)?.IsStarted ?? false))

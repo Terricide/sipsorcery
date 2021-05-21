@@ -19,6 +19,7 @@ using System.Linq;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using SIPSorcery.App.SIPUserAgents.Behaviours;
 using SIPSorcery.Net;
 using SIPSorcery.Sys;
 
@@ -49,6 +50,9 @@ namespace SIPSorcery.SIP.App
         public SIPDialogue SIPDialogue { get; private set; }
 
         protected ISIPAccount m_sipAccount;
+
+        private SIPNonInviteTransaction m_byeTransaction;       // If the server call is hungup this transaction contains the BYE in case it needs to be resent.
+
         public ISIPAccount SIPAccount
         {
             get { return m_sipAccount; }
@@ -61,6 +65,7 @@ namespace SIPSorcery.SIP.App
             set { m_isAuthenticated = value; }
         }
 
+        public bool IsHangingUp => m_byeTransaction?.DeliveryPending ?? false;
         public bool IsCancelled => m_isCancelled;
         public SIPRequest CallRequest => m_uasTransaction.TransactionRequest;
         public string CallDestination => m_uasTransaction.TransactionRequest.URI.User;
@@ -446,9 +451,9 @@ namespace SIPSorcery.SIP.App
                         else
                         {
                             var byeRequest = SIPDialogue.GetInDialogRequest(SIPMethodsEnum.BYE);
-                            SIPNonInviteTransaction byeTransaction = new SIPNonInviteTransaction(m_sipTransport, byeRequest, m_outboundProxy);
-                            byeTransaction.NonInviteTransactionFinalResponseReceived += ByeServerFinalResponseReceived;
-                            byeTransaction.SendRequest();
+                            m_byeTransaction = new SIPNonInviteTransaction(m_sipTransport, byeRequest, m_outboundProxy);
+                            m_byeTransaction.NonInviteTransactionFinalResponseReceived += ByeServerFinalResponseReceived;
+                            m_byeTransaction.SendRequest();
                         }
                     }
                     catch (Exception excp)
@@ -470,19 +475,9 @@ namespace SIPSorcery.SIP.App
 
                 if ((sipResponse.Status == SIPResponseStatusCodesEnum.ProxyAuthenticationRequired || sipResponse.Status == SIPResponseStatusCodesEnum.Unauthorised) && SIPAccount != null)
                 {
-                    // Resend BYE with credentials.
-                    SIPAuthorisationDigest authRequest = sipResponse.Header.AuthenticationHeader.SIPDigest;
-                    SIPURI contactUri = sipResponse.Header.Contact.Any() ? sipResponse.Header.Contact[0].ContactURI : sipResponse.Header.From.FromURI;
+                    var updatedSipRequest = SIPAuthChallenge.AddAuthenticationHeaderToRequest(sipTransaction.TransactionRequest, sipResponse, SIPAccount.SIPUsername, SIPAccount.SIPPassword);
 
-                    authRequest.SetCredentials(SIPAccount.SIPUsername, SIPAccount.SIPPassword, contactUri.ToString(), SIPMethodsEnum.BYE.ToString());
-
-                    SIPRequest authByeRequest = byeTransaction.TransactionRequest;
-                    authByeRequest.Header.AuthenticationHeader = new SIPAuthenticationHeader(authRequest);
-                    authByeRequest.Header.AuthenticationHeader.SIPDigest.Response = authRequest.Digest;
-                    authByeRequest.Header.Vias.TopViaHeader.Branch = CallProperties.CreateBranchId();
-                    authByeRequest.Header.CSeq = authByeRequest.Header.CSeq + 1;
-
-                    SIPNonInviteTransaction authByeTransaction = new SIPNonInviteTransaction(m_sipTransport, authByeRequest, null);
+                    SIPNonInviteTransaction authByeTransaction = new SIPNonInviteTransaction(m_sipTransport, updatedSipRequest, null);
                     authByeTransaction.SendRequest();
                 }
 
