@@ -109,7 +109,9 @@ namespace SIPSorcery.SIP.App
         /// <param name="username">The username to use if the server requests authorisation.</param>
         /// <param name="password">The password to use if the server requests authorisation.</param>
         /// <param name="server">The hostname or socket address for the registration server. Can be in a format of
-        /// hostname:port or ipaddress:port, e.g. sipsorcery.com or 67.222.131.147:5060.</param>
+        /// hostname:port or ipaddress:port, e.g. sipsorcery.com or 67.222.131.147:5060. The transport can also
+        /// be specified using a SIP URI parameter, e.g. sip:sipsorcery.com;transport=tcp or sip:sipsorcery.com;transport=tls
+        /// although in the latter case it would be better to use sips:sipsorcery.com.</param>
         /// <param name="expiry">The expiry value to request for the contact. This value can be rejected or overridden
         /// by the server.</param>
         /// <param name="maxRegistrationAttemptTimeout">The period in seconds to wait for a server response before
@@ -390,7 +392,7 @@ namespace SIPSorcery.SIP.App
 
                 if (sipResponse.Status == SIPResponseStatusCodesEnum.ProxyAuthenticationRequired || sipResponse.Status == SIPResponseStatusCodesEnum.Unauthorised)
                 {
-                    if (sipResponse.Header.AuthenticationHeader != null)
+                    if (sipResponse.Header.HasAuthenticationHeader)
                     {
                         if (m_attempts >= m_maxRegisterAttempts)
                         {
@@ -402,7 +404,11 @@ namespace SIPSorcery.SIP.App
                         else
                         {
                             m_attempts++;
-                            SIPRequest authenticatedRequest = GetAuthenticatedRegistrationRequest(sipTransaction.TransactionRequest, sipResponse);
+
+                            string username = (m_authUsername != null) ? m_authUsername : m_sipAccountAOR.User;
+                            var authenticatedRequest = sipTransaction.TransactionRequest.DuplicateAndAuthenticate(
+                                sipResponse.Header.AuthenticationHeaders, username, m_password);
+
                             SIPEndPoint registrarSIPEndPoint = m_outboundProxy;
                             if (registrarSIPEndPoint == null)
                             {
@@ -664,30 +670,6 @@ namespace SIPSorcery.SIP.App
             }
 
             return AdjustRegister(registerRequest);
-        }
-
-        private SIPRequest GetAuthenticatedRegistrationRequest(SIPRequest registerRequest, SIPResponse sipResponse)
-        {
-            SIPAuthorisationDigest authRequest = sipResponse.Header.AuthenticationHeader.SIPDigest;
-            string username = (m_authUsername != null) ? m_authUsername : m_sipAccountAOR.User;
-            authRequest.SetCredentials(username, m_password, registerRequest.URI.ToString(), SIPMethodsEnum.REGISTER.ToString());
-            if (!this.m_realm.IsNullOrBlank())
-            {
-                authRequest.Realm = this.m_realm;
-            }
-
-            SIPRequest regRequest = registerRequest.Copy();
-            regRequest.SetSendFromHints(registerRequest.LocalSIPEndPoint);
-
-            regRequest.Header.Vias.TopViaHeader.Branch = CallProperties.CreateBranchId();
-            regRequest.Header.From.FromTag = CallProperties.CreateNewTag();
-            regRequest.Header.To.ToTag = null;
-            regRequest.Header.CSeq = ++m_cseq;
-
-            regRequest.Header.AuthenticationHeader = new SIPAuthenticationHeader(authRequest);
-            regRequest.Header.AuthenticationHeader.SIPDigest.Response = authRequest.Digest;
-
-            return regRequest;
         }
     }
 }

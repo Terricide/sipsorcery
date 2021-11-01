@@ -30,7 +30,6 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
-using SIPSorcery.App.SIPUserAgents.Behaviours;
 using SIPSorcery.Net;
 using SIPSorcery.Sys;
 
@@ -514,13 +513,13 @@ namespace SIPSorcery.SIP.App
                 if (sdp == null)
                 {
                     ClientCallFailed?.Invoke(m_uac, $"Could not generate an offer.", null);
-                    CallEnded();
+                    CallEnded(m_callDescriptor.CallId);
                 }
                 else
                 {
                     sipCallDescriptor.Content = sdp.ToString();
 
-                    if(ringTimeout > 0)
+                    if (ringTimeout > 0)
                     {
                         logger.LogDebug($"Setting ring timeout of {ringTimeout}s.");
                         _ringTimeout = new Timer((state) => m_uac?.Cancel(), null, ringTimeout * 1000, Timeout.Infinite);
@@ -533,7 +532,7 @@ namespace SIPSorcery.SIP.App
             else
             {
                 ClientCallFailed?.Invoke(m_uac, $"Could not resolve destination when placing call to {sipCallDescriptor.Uri}.", null);
-                CallEnded();
+                CallEnded(sipCallDescriptor.CallId);
             }
         }
 
@@ -574,19 +573,23 @@ namespace SIPSorcery.SIP.App
                     MediaSession?.Close("call hungup");
                 }
 
+                string callID = null;
+
                 if (m_uac != null)
                 {
+                    callID = m_uac.SIPDialogue?.CallId;
                     m_uac.Hangup();
                 }
                 else if (m_uas != null)
                 {
+                    callID = m_uas.SIPDialogue?.CallId;
                     m_uas.Hangup(false);
                 }
 
                 IsOnLocalHold = false;
                 IsOnRemoteHold = false;
 
-                CallEnded();
+                CallEnded(callID);
             }
         }
 
@@ -607,7 +610,7 @@ namespace SIPSorcery.SIP.App
             uas.ClientTransaction.TransactionTraceMessage += (tx, msg) => OnTransactionTraceMessage?.Invoke(tx, msg);
             uas.CallCancelled += (pendingUas) =>
             {
-                CallEnded();
+                CallEnded(inviteRequest.Header.CallId);
                 ServerCallCancelled?.Invoke(pendingUas);
             };
             uas.NoRingTimeout += (pendingUas) =>
@@ -933,7 +936,7 @@ namespace SIPSorcery.SIP.App
                 SIPNonInviteTransaction byeTx = new SIPNonInviteTransaction(m_transport, sipRequest, null);
                 byeTx.SendResponse(SIPResponse.GetResponse(sipRequest, SIPResponseStatusCodesEnum.Ok, null));
 
-                CallEnded();
+                CallEnded(sipRequest.Header.CallId);
             }
             else if (sipRequest.Method == SIPMethodsEnum.INVITE)
             {
@@ -1413,8 +1416,9 @@ namespace SIPSorcery.SIP.App
                 var (username, password) = GetUsernameAndPassword();
                 if (username != null)
                 {
-                    var updatedSipRequest = SIPAuthChallenge.AddAuthenticationHeaderToRequest(sipTransaction.TransactionRequest, sipResponse, username, password);
-                    UACInviteTransaction authenticateInviteTransaction = new UACInviteTransaction(m_transport, updatedSipRequest, null);
+                    var authRequest = sipTransaction.TransactionRequest.DuplicateAndAuthenticate(sipResponse.Header.AuthenticationHeaders,
+                                username, password);
+                    UACInviteTransaction authenticateInviteTransaction = new UACInviteTransaction(m_transport, authRequest, null);
                     authenticateInviteTransaction.SendInviteRequest();
                 }
             }
@@ -1476,7 +1480,7 @@ namespace SIPSorcery.SIP.App
             }
             else
             {
-                logger.LogInformation($"Call attempt to {m_uac.CallDescriptor.Uri} received a trying response {sipResponse.ShortDescription}.");
+                logger.LogInformation($"Call attempt to {uac.CallDescriptor.Uri} received a trying response {sipResponse.ShortDescription}.");
             }
         }
 
@@ -1505,7 +1509,7 @@ namespace SIPSorcery.SIP.App
             }
             else
             {
-                logger.LogInformation($"Call attempt to {m_uac.CallDescriptor.Uri} received a ringing response {sipResponse.ShortDescription}.");
+                logger.LogInformation($"Call attempt to {uac.CallDescriptor.Uri} received a ringing response {sipResponse.ShortDescription}.");
             }
         }
 
@@ -1516,7 +1520,7 @@ namespace SIPSorcery.SIP.App
         /// <param name="errorMessage">An error message indicating the reason for the failure.</param>
         private void ClientCallFailedHandler(ISIPClientUserAgent uac, string errorMessage, SIPResponse sipResponse)
         {
-            logger.LogWarning($"Call attempt to {m_uac.CallDescriptor?.Uri} failed with {errorMessage}.");
+            logger.LogWarning($"Call attempt to {uac.CallDescriptor?.Uri} failed with {errorMessage}.");
 
             _ringTimeout?.Dispose();
 
@@ -1543,7 +1547,7 @@ namespace SIPSorcery.SIP.App
                     m_sipDialogue = uac.SIPDialogue;
                     m_sipDialogue.DialogueState = SIPDialogueStateEnum.Confirmed;
 
-                    logger.LogInformation($"Call attempt to {m_uac.CallDescriptor.Uri} was answered; no media update from early media.");
+                    logger.LogInformation($"Call attempt to {uac.CallDescriptor.Uri} was answered; no media update from early media.");
 
                     ClientCallAnswered?.Invoke(uac, sipResponse);
                 }
@@ -1558,7 +1562,7 @@ namespace SIPSorcery.SIP.App
                         m_sipDialogue = uac.SIPDialogue;
                         m_sipDialogue.DialogueState = SIPDialogueStateEnum.Confirmed;
 
-                        logger.LogInformation($"Call attempt to {m_uac.CallDescriptor.Uri} was answered.");
+                        logger.LogInformation($"Call attempt to {uac.CallDescriptor.Uri} was answered.");
 
                         ClientCallAnswered?.Invoke(uac, sipResponse);
                     }
@@ -1567,7 +1571,7 @@ namespace SIPSorcery.SIP.App
                         logger.LogWarning($"Call attempt was answered with {sipResponse.ShortDescription} but an {setDescriptionResult} error occurred setting the remote description.");
                         ClientCallFailed?.Invoke(uac, $"Failed to set the remote description {setDescriptionResult}", sipResponse);
                         uac.SIPDialogue?.Hangup(this.m_transport, this.m_outboundProxy);
-                        CallEnded();
+                        CallEnded(sipResponse.Header.CallId);
                     }
                 }
             }
@@ -1575,7 +1579,7 @@ namespace SIPSorcery.SIP.App
             {
                 logger.LogWarning($"Call attempt was answered with failure response {sipResponse.ShortDescription}.");
                 ClientCallFailed?.Invoke(uac, sipResponse.ReasonPhrase, sipResponse);
-                CallEnded();
+                CallEnded(sipResponse.Header.CallId);
             }
         }
 
@@ -1650,24 +1654,49 @@ namespace SIPSorcery.SIP.App
         /// <summary>
         /// The current call has ended. Reset the state of the user agent.
         /// </summary>
-        private void CallEnded()
+        private void CallEnded(string callId)
         {
-            m_uac = null;
-            m_uas = null;
-            m_callDescriptor = null;
-
-            IsOnLocalHold = false;
-            IsOnRemoteHold = false;
-
-            if (MediaSession != null && !MediaSession.IsClosed)
+            if (m_callDescriptor != null)
             {
-                MediaSession.Close("normal");
-                MediaSession = null;
+                if (m_callDescriptor.CallId.Equals(callId, StringComparison.OrdinalIgnoreCase))
+                {
+                    m_uac = null;
+                    m_callDescriptor = null;
+
+                    IsOnLocalHold = false;
+                    IsOnRemoteHold = false;
+
+                    if (MediaSession != null && !MediaSession.IsClosed)
+                    {
+                        MediaSession.Close("normal");
+                        MediaSession = null;
+                    }
+
+                    m_sipDialogue = null;
+                }
             }
+            else
+            {
+                if (m_uas != null)
+                {
+                    if (m_uas.SIPDialogue.CallId.Equals(callId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        m_uas = null;
 
-            OnCallHungup?.Invoke(m_sipDialogue);
+                        IsOnLocalHold = false;
+                        IsOnRemoteHold = false;
 
-            m_sipDialogue = null;
+                        if (MediaSession != null && !MediaSession.IsClosed)
+                        {
+                            MediaSession.Close("normal");
+                            MediaSession = null;
+                        }
+
+                        OnCallHungup?.Invoke(m_sipDialogue);
+                        m_sipDialogue = null;
+                    }
+                }
+            }
         }
 
         /// <summary>

@@ -64,6 +64,9 @@ namespace SIPSorcery.SIP
         private CancellationTokenSource m_cts = new CancellationTokenSource();
         private bool m_closed = false;
 
+        private readonly Encoding m_sipEncoding;
+        private readonly Encoding m_sipBodyEncoding;
+
         /// <summary>
         /// If true allows this class to attempt to create a new SIP channel if a required protocol
         /// is missing. Set to false to prevent new channels being created on demand.
@@ -76,17 +79,23 @@ namespace SIPSorcery.SIP
         /// List of the SIP channels that have been opened and are under management by this instance.
         /// The dictionary key is channel ID (previously was a serialised SIP end point).
         /// </summary>
-        private Dictionary<string, SIPChannel> m_sipChannels = new Dictionary<string, SIPChannel>();
+        private ConcurrentDictionary<string, SIPChannel> m_sipChannels = new ConcurrentDictionary<string, SIPChannel>();
 
         internal SIPTransactionEngine m_transactionEngine;
 
         /// <summary>
-        /// Default call to do DNS lookups for SIP URI's. Can be replaced for custom scenarios
+        /// Default call to do DNS lookups for SIP URI's. In normal circumstances this property does not need to
+        /// be set manually and care needs to be taken if it is. Can be replaced for custom scenarios
         /// and unit testing.
         /// </summary>
-        internal ResolveSIPUriDelegateAsync ResolveSIPUriInternalAsync;
+        public ResolveSIPUriDelegateAsync ResolveSIPUriCallbackAsync;
 
-        internal ResolveSIPUriFromCacheDelegate ResolveSIPUriFromCacheInternal;
+        /// <summary>
+        /// Default call to do DNS lookups for SIP URI's from cache and avoid a time consuming full DNS lookup. 
+        /// In normal circumstances this property does not need to be set manually and care needs to be taken if 
+        /// it is. Can be replaced for custom scenarios and unit testing.
+        /// </summary>
+        public ResolveSIPUriFromCacheDelegate ResolveSIPUriFromCacheCallback;
 
         public event SIPTransportRequestAsyncDelegate SIPTransportRequestReceived;
         public event SIPTransportResponseAsyncDelegate SIPTransportResponseReceived;
@@ -154,7 +163,7 @@ namespace SIPSorcery.SIP
         /// to only send each request and response for a transaction once, i.e. retransmits
         /// timers firing will not cause additional sending of the requests or responses to be
         /// put on the wire. SIP transaction processing will still occur as normal with the 
-        /// execption of not sending the retransmitted messages. It's also only likely to
+        /// exception of not sending the retransmitted messages. It's also only likely to
         /// be useful for cases where reliable transports, such as TCP and TLS, are being used,
         /// since they are the ones where retransmits have been observed to be misidentified.
         /// </summary>
@@ -185,28 +194,42 @@ namespace SIPSorcery.SIP
         }
 
         /// <summary>
-        /// Creates a SIP transport class with default DNS resolver and SIP transaction engine.
+        /// Warning: Do not set this property unless you explicitly require a very high number of 
+        /// in-flight SIP transactions. The default limit is high and increasing it is likely to
+        /// have a significant impact on CPU and memory performance.
         /// </summary>
-        public SIPTransport()
+        public static int MaxPendingTransactionsCount
         {
-            ResolveSIPUriInternalAsync = SIPDns.ResolveAsync;
-            ResolveSIPUriFromCacheInternal = SIPDns.ResolveFromCache;
-
-            //ResolveSIPEndPoint_External = SIPDNSManager.ResolveSIPService;
-            m_transactionEngine = new SIPTransactionEngine(this);
-            m_transactionEngine.SIPRequestRetransmitTraceEvent += (tx, req, count) => SIPRequestRetransmitTraceEvent?.Invoke(tx, req, count);
-            m_transactionEngine.SIPResponseRetransmitTraceEvent += (tx, resp, count) => SIPResponseRetransmitTraceEvent?.Invoke(tx, resp, count);
+            get => SIPTransactionEngine.MaxReliableTranismissionsCount;
+            set => SIPTransactionEngine.MaxReliableTranismissionsCount = value;
         }
 
         /// <summary>
-        /// Allows the transport layer to be created to operate in a stateless mode.
+        /// Creates a SIP transport class with default DNS resolver and SIP transaction engine.
         /// </summary>
-        /// <param name="stateless">If true the transport layer will NOT queue incoming messages
-        /// and will NOT use a transaction engine.</param>
-        public SIPTransport(bool stateless)
+        public SIPTransport():this(false)
         {
-            ResolveSIPUriInternalAsync = SIPDns.ResolveAsync;
-            ResolveSIPUriFromCacheInternal = SIPDns.ResolveFromCache;
+        }
+        public SIPTransport(Encoding sipEncoding, Encoding sipBodyEncoding) : this(false, sipEncoding, sipBodyEncoding)
+        {
+        }
+        public SIPTransport(bool stateless):this(stateless, SIPConstants.DEFAULT_ENCODING, SIPConstants.DEFAULT_ENCODING)
+        {
+        }
+
+        /// <summary>
+            /// Allows the transport layer to be created to operate in a stateless mode.
+            /// </summary>
+            /// <param name="stateless">If true the transport layer will NOT queue incoming messages
+            /// and will NOT use a transaction engine.</param>
+            /// <param name="sipEncoding"></param>
+            /// <param name="sipBodyEncoding"></param>
+            public SIPTransport(bool stateless,Encoding sipEncoding,Encoding sipBodyEncoding)
+        {
+            m_sipEncoding = sipEncoding;
+            m_sipBodyEncoding = sipBodyEncoding;
+            ResolveSIPUriCallbackAsync = SIPDns.ResolveAsync;
+            ResolveSIPUriFromCacheCallback = SIPDns.ResolveFromCache;
 
             if (stateless)
             {
@@ -215,6 +238,7 @@ namespace SIPSorcery.SIP
             else
             {
                 m_queueIncoming = true;
+                //ResolveSIPEndPoint_External = SIPDNSManager.ResolveSIPService;
                 m_transactionEngine = new SIPTransactionEngine(this);
                 m_transactionEngine.SIPRequestRetransmitTraceEvent += (tx, req, count) => SIPRequestRetransmitTraceEvent?.Invoke(tx, req, count);
                 m_transactionEngine.SIPResponseRetransmitTraceEvent += (tx, resp, count) => SIPResponseRetransmitTraceEvent?.Invoke(tx, resp, count);
@@ -239,16 +263,21 @@ namespace SIPSorcery.SIP
         {
             try
             {
-                m_sipChannels.Add(sipChannel.ID, sipChannel);
-
-                // Wire up the SIP transport to the SIP channel.
-                sipChannel.SIPMessageReceived += ReceiveMessage;
-
-                if (m_queueIncoming && !m_transportThreadStarted)
+                if (m_sipChannels.TryAdd(sipChannel.ID, sipChannel))
                 {
-                    // Starts tasks to process queued SIP messages.
-                    m_transportThreadStarted = true;
-                    Task.Factory.StartNew(ProcessReceiveQueue, TaskCreationOptions.LongRunning);
+                    // Wire up the SIP transport to the SIP channel.
+                    sipChannel.SIPMessageReceived += ReceiveMessage;
+
+                    if (m_queueIncoming && !m_transportThreadStarted)
+                    {
+                        // Starts tasks to process queued SIP messages.
+                        m_transportThreadStarted = true;
+                        Task.Factory.StartNew(ProcessReceiveQueue, TaskCreationOptions.LongRunning);
+                    }
+                }
+                else
+                {
+                    throw new ApplicationException("Failed to add SIPChannel to the SIP transport.");
                 }
             }
             catch (Exception excp)
@@ -266,7 +295,7 @@ namespace SIPSorcery.SIP
         {
             if (m_sipChannels.ContainsKey(sipChannel.ID))
             {
-                m_sipChannels.Remove(sipChannel.ID);
+                m_sipChannels.TryRemove(sipChannel.ID, out _);
                 sipChannel.SIPMessageReceived -= ReceiveMessage;
             }
         }
@@ -447,9 +476,12 @@ namespace SIPSorcery.SIP
         /// SIP Proxy servers that are relying on the remote SIP agent to retransmit requests.
         /// </summary>
         /// <param name="sipRequest">The SIP request to send.</param>
+        /// <param name="waitForDns">If true the request will wait for any required DNS lookup to 
+        /// complete. This can potentially take many seconds. If false the DNS lookup will be
+        /// queued and the send will need to be called again.</param>
         /// <returns>Will return InPorgress for a DNS cache miss. HostNotFound for a cache hit on a 
         /// failure response. Otherwise the result of the send attempt.</returns>
-        public Task<SocketError> SendRequestAsync(SIPRequest sipRequest)
+        public async Task<SocketError> SendRequestAsync(SIPRequest sipRequest, bool waitForDns = false)
         {
             if (sipRequest == null)
             {
@@ -464,67 +496,47 @@ namespace SIPSorcery.SIP
             SIPURI lookupURI = (sipRequest.Header.Routes != null && sipRequest.Header.Routes.Length > 0) ?
                 sipRequest.Header.Routes.TopRoute.URI : sipRequest.URI;
 
-            var cacheResult = ResolveSIPUriFromCacheInternal(lookupURI, PreferIPv6NameResolution);
+            var cacheResult = ResolveSIPUriFromCacheCallback(lookupURI, PreferIPv6NameResolution);
 
-            if (cacheResult == null)
+            if (cacheResult == SIPEndPoint.Empty)
             {
-                // No existing success or failure entry in the cache. Initiate a lookup but DON'T wait for it.
-                _ = Task.Run(() => ResolveSIPUriInternalAsync(lookupURI, PreferIPv6NameResolution, m_cts.Token));
-
-                return Task.FromResult(SocketError.InProgress);
+                return SocketError.HostNotFound;
             }
-            else if (cacheResult == SIPEndPoint.Empty)
+            else if(cacheResult != null)
             {
-                return Task.FromResult(SocketError.HostNotFound);
+                return await SendRequestAsync(cacheResult, sipRequest).ConfigureAwait(false);
             }
             else
             {
-                return SendRequestAsync(cacheResult, sipRequest);
-            }
-        }
-
-        /// <summary>
-        /// Sends a SIP request. This method will attempt to find the most appropriate
-        /// local SIP channel to send the request on.
-        /// </summary>
-        /// <param name="sipRequest">The SIP request to send.</param>
-        /// <param name="waitForDns">If true the request will wait for any required DNS lookup to 
-        /// complete. This can potentially take many seconds. If false the DNS lookup will be
-        /// queued and the send will need to be called again.</param>
-        public async Task<SocketError> SendRequestAsync(SIPRequest sipRequest, bool waitForDns)
-        {
-            if (sipRequest == null)
-            {
-                throw new ArgumentNullException(nameof(sipRequest), "The SIP request must be set for SendRequest.");
-            }
-
-            if (!waitForDns)
-            {
-                // This overload attempts to use the DNS cache and if no hit it will
-                // initiate the DNS query but not wait for it.
-                return await SendRequestAsync(sipRequest).ConfigureAwait(false);
-            }
-            else
-            {
-                SIPURI lookupURI = (sipRequest.Header.Routes != null && sipRequest.Header.Routes.Length > 0) ?
-                    sipRequest.Header.Routes.TopRoute.URI : sipRequest.URI;
-
-                SIPEndPoint lookupResult = ResolveSIPUriFromCacheInternal(lookupURI, PreferIPv6NameResolution);
-
-                if (lookupResult == null)
+                if (waitForDns || DisableRetransmitSending)
                 {
-                    //logger.LogWarning($"SendRequestAsync DNS cache miss for {lookupURI}, doing DNS lookup.");
+                    // This is the UNHAPPY path.
+                    // If there was no cached DNS result then wait for a new resolution attempt to complete.
+                    // DNS lookups can take a relatively LONG time, possibly >=20s with a poor DNS server.
+                    // In ideal circumstances DON'T wait for DNS and instead use the SIP retransmit mechanism
+                    // with its regular retry attempts to wait for DNS resolution.
+                    SIPEndPoint lookupResult = ResolveSIPUriFromCacheCallback(lookupURI, PreferIPv6NameResolution);
 
-                    lookupResult = await ResolveSIPUriInternalAsync(lookupURI, PreferIPv6NameResolution, m_cts.Token).ConfigureAwait(false);
-                }
+                    if (lookupResult == null)
+                    {
+                        lookupResult = await ResolveSIPUriCallbackAsync(lookupURI, PreferIPv6NameResolution, m_cts.Token).ConfigureAwait(false);
+                    }
 
-                if (lookupResult != null && lookupResult != SIPEndPoint.Empty)
-                {
-                    return await SendRequestAsync(lookupResult, sipRequest).ConfigureAwait(false);
+                    if (lookupResult != null && lookupResult != SIPEndPoint.Empty)
+                    {
+                        return await SendRequestAsync(lookupResult, sipRequest).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        return SocketError.HostNotFound;
+                    }
                 }
                 else
                 {
-                    return SocketError.HostNotFound;
+                    // This is the HAPPY path.
+                    // No existing success or failure entry in the cache. Initiate a lookup but DON'T wait for it.
+                    _ = Task.Run(() => ResolveSIPUriCallbackAsync(lookupURI, PreferIPv6NameResolution, m_cts.Token).ConfigureAwait(false));
+                    return SocketError.InProgress;
                 }
             }
         }
@@ -630,49 +642,6 @@ namespace SIPSorcery.SIP
         }
 
         /// <summary>
-        /// This is a special send method that relies on the SIP transaction retransmit logic to avoid
-        /// blocking when a DNS request is required. This type of send is suitable for responses that 
-        /// are part of a transaction or for SIP Proxy servers that are relying on the remote 
-        /// SIP agent to retransmit requests.
-        /// </summary>
-        /// <param name="sipResponse">The SIP response to send.</param>
-        /// <returns>Will return InPorgress for a DNS cache miss. HostNotFound for a cache hit on a 
-        /// failure response. Otherwise the result of the send attempt.</returns>
-        public Task<SocketError> SendResponseAsync(SIPResponse sipResponse)
-        {
-            if (sipResponse == null)
-            {
-                throw new ArgumentNullException(nameof(sipResponse), "The SIP response must be set for SendResponse.");
-            }
-
-            // The lookup logic is designed to take advantage of the SIP retransmit mechanism. Rather
-            // than initiate the lookup and then wait for it to complete, which could take up to 20s
-            // in extreme cases, the lookup is put on it's own thread and then when ready the result
-            // will be used on the next SIP retransmit.
-
-            var topViaHeader = sipResponse.Header.Vias.TopViaHeader;
-            SIPURI topViaUri = new SIPURI(null, topViaHeader.ReceivedFromAddress, null, SIPSchemesEnum.sip, topViaHeader.Transport);
-
-            var cacheResult = ResolveSIPUriFromCacheInternal(topViaUri, PreferIPv6NameResolution);
-
-            if (cacheResult == null)
-            {
-                // No existing success or failure entry in the cache. Initiate a lookup but DON'T wait for it.
-                _ = Task.Run(() => ResolveSIPUriInternalAsync(topViaUri, PreferIPv6NameResolution, m_cts.Token).ConfigureAwait(false));
-
-                return Task.FromResult(SocketError.InProgress);
-            }
-            else if (cacheResult == SIPEndPoint.Empty)
-            {
-                return Task.FromResult(SocketError.HostNotFound);
-            }
-            else
-            {
-                return SendResponseAsync(cacheResult, sipResponse);
-            }
-        }
-
-        /// <summary>
         /// Forwards a SIP response. There are two main cases for a SIP response to be forwarded:
         /// - First case is when we have processed a request and are returning a response. In this case the response
         ///   should be sent back on exactly the same socket the request came on.
@@ -686,16 +655,22 @@ namespace SIPSorcery.SIP
         ///   send the response on. If the hinted channel can't be found or it is found but is the wrong protocol then
         ///   move onto the next step,
         /// - The information in the Top Via header will be used to find the best channel to forward the response on.
+        /// This is a special send method that relies on the SIP transaction retransmit logic to avoid
+        /// blocking when a DNS request is required. This type of send is suitable for responses that 
+        /// are part of a transaction or for SIP Proxy servers that are relying on the remote 
+        /// SIP agent to retransmit requests.
         /// </summary>
         /// <param name="sipResponse">The SIP response to send.</param>
+        /// <returns>Will return InPorgress for a DNS cache miss. HostNotFound for a cache hit on a 
+        /// failure response. Otherwise the result of the send attempt.</returns>
         /// <param name="waitForDns">If true the request will wait for any required DNS lookup to 
         /// complete. This can potentially take many seconds. If false the DNS lookup will be
         /// queued and the send will need to be called again.</param>
-        public async Task<SocketError> SendResponseAsync(SIPResponse sipResponse, bool waitForDns)
+        public async Task<SocketError> SendResponseAsync(SIPResponse sipResponse, bool waitForDns = false)
         {
             if (sipResponse == null)
             {
-                throw new ArgumentNullException(nameof(sipResponse), "The SIP response must be set for SendResponseAsync.");
+                throw new ArgumentNullException(nameof(sipResponse), "The SIP response must be set for SendResponse.");
             }
             else if (sipResponse.Header.Vias?.TopViaHeader == null)
             {
@@ -704,26 +679,46 @@ namespace SIPSorcery.SIP
             }
             else
             {
-                if (!waitForDns)
+                var topViaHeader = sipResponse.Header.Vias.TopViaHeader;
+                SIPURI topViaUri = new SIPURI(null, topViaHeader.ReceivedFromAddress, null, SIPSchemesEnum.sip, topViaHeader.Transport);
+
+                var cacheResult = ResolveSIPUriFromCacheCallback(topViaUri, PreferIPv6NameResolution);
+
+                if (cacheResult == SIPEndPoint.Empty)
                 {
-                    // This overload attempts to use the DNS cache and if no hit it will
-                    // initiate the DNS query but not wait for it.
-                    return await SendResponseAsync(sipResponse).ConfigureAwait(false);
+                    return SocketError.HostNotFound;
+                }
+                else if (cacheResult != null)
+                {
+                    return await SendResponseAsync(cacheResult, sipResponse).ConfigureAwait(false);
                 }
                 else
                 {
-                    var topViaHeader = sipResponse.Header.Vias.TopViaHeader;
-                    SIPURI topViaUri = new SIPURI(null, topViaHeader.ReceivedFromAddress, null, SIPSchemesEnum.sip, topViaHeader.Transport);
-
-                    var lookupResult = await ResolveSIPUriInternalAsync(topViaUri, PreferIPv6NameResolution, m_cts.Token).ConfigureAwait(false);
-
-                    if (lookupResult != null && lookupResult != SIPEndPoint.Empty)
+                    if (waitForDns || DisableRetransmitSending)
                     {
-                        return await SendResponseAsync(lookupResult, sipResponse).ConfigureAwait(false);
+                        // UNHAPPY PATH.
+                        // The send will block waiting for a DNS resolution.
+                        var lookupResult = await ResolveSIPUriCallbackAsync(topViaUri, PreferIPv6NameResolution, m_cts.Token).ConfigureAwait(false);
+
+                        if (lookupResult != null && lookupResult != SIPEndPoint.Empty)
+                        {
+                            return await SendResponseAsync(lookupResult, sipResponse).ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            return SocketError.HostNotFound;
+                        }
                     }
                     else
                     {
-                        return SocketError.HostNotFound;
+                        // HAPPY PATH.
+                        // The lookup logic is designed to take advantage of the SIP retransmit mechanism. Rather
+                        // than initiate the lookup and then wait for it to complete, which could take up to 20s
+                        // in extreme cases, the lookup is put on it's own thread and then when ready the result
+                        // will be used on the next SIP retransmit.
+                        // No existing success or failure entry in the cache. Initiate a lookup but DON'T wait for it.
+                        _ = Task.Run(() => ResolveSIPUriCallbackAsync(topViaUri, PreferIPv6NameResolution, m_cts.Token).ConfigureAwait(false));
+                        return SocketError.InProgress;
                     }
                 }
             }
@@ -898,7 +893,11 @@ namespace SIPSorcery.SIP
         /// <param name="localEndPoint">The local end point that the SIP channel received the message on.</param>
         /// <param name="remoteEndPoint">The remote end point the message came from.</param>
         /// <param name="buffer">The raw message received.</param>
-        private Task<SocketError> SIPMessageReceived(SIPChannel sipChannel, SIPEndPoint localEndPoint, SIPEndPoint remoteEndPoint, byte[] buffer)
+        private Task<SocketError> SIPMessageReceived(
+            SIPChannel sipChannel, 
+            SIPEndPoint localEndPoint, 
+            SIPEndPoint remoteEndPoint, 
+            byte[] buffer)
         {
             string rawSIPMessage = null;
 
@@ -916,7 +915,7 @@ namespace SIPSorcery.SIP
                         // Treat all messages that don't match STUN requests as SIP.
                         if (buffer.Length > SIPConstants.SIP_MAXIMUM_RECEIVE_LENGTH)
                         {
-                            string rawErrorMessage = Encoding.UTF8.GetString(buffer, 0, 1024) + "\r\n..truncated";
+                            string rawErrorMessage = m_sipEncoding.GetString(buffer, 0, 1024) + "\r\n..truncated";
                             SIPBadRequestInTraceEvent?.Invoke(localEndPoint, remoteEndPoint, "SIP message too large, " + buffer.Length + " bytes, maximum allowed is " + SIPConstants.SIP_MAXIMUM_RECEIVE_LENGTH + " bytes.", SIPValidationFieldsEnum.Request, rawErrorMessage);
                             SIPResponse tooLargeResponse = SIPResponse.GetResponse(localEndPoint, remoteEndPoint, SIPResponseStatusCodesEnum.MessageTooLarge, null);
                             return SendResponseAsync(tooLargeResponse);
@@ -925,7 +924,7 @@ namespace SIPSorcery.SIP
                         {
                             // TODO: Future improvement (4.5.2 doesn't support) is to use a ReadOnlySpan to check for the existence 
                             // of 'S', 'I', 'P' before the first EOL.
-                            rawSIPMessage = Encoding.UTF8.GetString(buffer, 0, buffer.Length);
+                            rawSIPMessage = m_sipEncoding.GetString(buffer, 0, buffer.Length);
                             if (rawSIPMessage.IsNullOrBlank() || SIPMessageBuffer.IsPing(buffer))
                             {
                                 // An empty transmission has been received. More than likely this is a NAT keep alive and can be disregarded.
@@ -937,7 +936,7 @@ namespace SIPSorcery.SIP
                                 return Task.FromResult(SocketError.InvalidArgument);
                             }
 
-                            SIPMessageBuffer sipMessageBuffer = SIPMessageBuffer.ParseSIPMessage(buffer, localEndPoint, remoteEndPoint);
+                            var sipMessageBuffer = SIPMessageBuffer.ParseSIPMessage(buffer,m_sipEncoding,m_sipBodyEncoding,  localEndPoint, remoteEndPoint);
 
                             if (sipMessageBuffer != null)
                             {
@@ -947,7 +946,7 @@ namespace SIPSorcery.SIP
 
                                     try
                                     {
-                                        SIPResponse sipResponse = SIPResponse.ParseSIPResponse(sipMessageBuffer);
+                                        SIPResponse sipResponse = SIPResponse.ParseSIPResponse(sipMessageBuffer,m_sipEncoding,m_sipBodyEncoding);
 
                                         SIPResponseInTraceEvent?.Invoke(localEndPoint, remoteEndPoint, sipResponse);
 
@@ -974,7 +973,7 @@ namespace SIPSorcery.SIP
 
                                     try
                                     {
-                                        SIPRequest sipRequest = SIPRequest.ParseSIPRequest(sipMessageBuffer);
+                                        SIPRequest sipRequest = SIPRequest.ParseSIPRequest(sipMessageBuffer,m_sipEncoding,m_sipBodyEncoding);
 
                                         SIPValidationFieldsEnum sipRequestErrorField = SIPValidationFieldsEnum.Unknown;
                                         string sipRequestValidationError = null;
@@ -1304,7 +1303,7 @@ namespace SIPSorcery.SIP
         /// <returns>If successful a SIP end point for the SIP URI. For failures SIPEndPoint.Empty.</returns>
         public Task<SIPEndPoint> ResolveSIPUriAsync(SIPURI uri)
         {
-            return ResolveSIPUriInternalAsync(uri, PreferIPv6NameResolution, m_cts.Token);
+            return ResolveSIPUriCallbackAsync(uri, PreferIPv6NameResolution, m_cts.Token);
         }
 
         public void Dispose()

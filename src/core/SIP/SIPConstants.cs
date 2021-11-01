@@ -16,7 +16,9 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Text;
 using SIPSorcery.Sys;
+// ReSharper disable InconsistentNaming
 
 namespace SIPSorcery.SIP
 {
@@ -74,6 +76,8 @@ namespace SIPSorcery.SIP
                 return _userAgentVersion;
             }
         }
+
+        public static Encoding DEFAULT_ENCODING = Encoding.UTF8;
 
         /// <summary>
         /// Gets the default SIP port for the protocol. 
@@ -223,7 +227,7 @@ namespace SIPSorcery.SIP
         /// <returns>True if the protocol is connectionless.</returns>
         public static bool IsConnectionless(SIPProtocolsEnum protocol)
         {
-            if(protocol == SIPProtocolsEnum.udp)
+            if (protocol == SIPProtocolsEnum.udp)
             {
                 return true;
             }
@@ -411,8 +415,8 @@ namespace SIPSorcery.SIP
         MultipleChoices = 300,
         MovedPermanently = 301,
         MovedTemporarily = 302,
-        UseProxy = 303,
         AlternativeService = 304,
+        UseProxy = 305,
 
         // Client-Error
         BadRequest = 400,
@@ -457,7 +461,6 @@ namespace SIPSorcery.SIP
         BadEvent = 489,                         // RC3265 (SIP Events).
         RequestPending = 491,
         Undecipherable = 493,
-        SecurityAgreementRequired = 580,
 
         // Server Failure.
         InternalServerError = 500,
@@ -598,6 +601,7 @@ namespace SIPSorcery.SIP
         Prack = 1,          // Reliable provisional responses as per RFC3262.
         NoReferSub = 2,     // No subscription for REFERs as per RFC4488.
         Replaces = 3,
+        SipRec = 4,
     }
 
     /// <summary>
@@ -609,6 +613,7 @@ namespace SIPSorcery.SIP
         public const string PRACK = "100rel";
         public const string NO_REFER_SUB = "norefersub";
         public const string REPLACES = "replaces";
+        public const string SIPREC = "siprec";
 
         /// <summary>
         /// Parses a string containing a list of SIP extensions into a list of extensions that this library
@@ -641,6 +646,10 @@ namespace SIPSorcery.SIP
                         else if (extension.Trim().ToLower() == REPLACES)
                         {
                             knownExtensions.Add(SIPExtensions.Replaces);
+                        }
+                        else if (extension.Trim().ToLower() == SIPREC)
+                        {
+                            knownExtensions.Add(SIPExtensions.SipRec);
                         }
                         else
                         {

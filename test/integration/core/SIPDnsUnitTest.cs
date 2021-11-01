@@ -124,7 +124,7 @@ namespace SIPSorcery.SIP.IntegrationTests
 
             CancellationTokenSource cts = new CancellationTokenSource();
 
-            SIPURI lookupURI = SIPURI.ParseSIPURIRelaxed("sip:tel.t-online.de:5060");
+            SIPURI lookupURI = SIPURI.ParseSIPURIRelaxed("sip:sip.sipsorcery.com:5060");
             //var result = SIPDNSManager.ResolveSIPService(lookupURI, false);
             var result = SIPDns.ResolveAsync(lookupURI, false, cts.Token).Result;
             Assert.NotNull(result);
@@ -240,7 +240,7 @@ namespace SIPSorcery.SIP.IntegrationTests
 
             try
             {
-                LookupClientOptions clientOptions = new LookupClientOptions(IPAddress.Loopback)
+                LookupClientOptions clientOptions = new LookupClientOptions(IPAddress.Parse("127.0.0.2"))
                 {
                     Retries = 3,
                     Timeout = TimeSpan.FromSeconds(1),

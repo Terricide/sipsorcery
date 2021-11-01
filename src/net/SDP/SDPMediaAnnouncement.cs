@@ -94,6 +94,7 @@ namespace SIPSorcery.Net
         public string IcePwd;                   // If ICE is being used the password for the STUN requests.
         public string IceOptions;               // Optional attribute to specify support ICE options, e.g. "trickle".
         public bool IceEndOfCandidates;         // If ICE candidate trickling is being used this needs to be set if all candidates have been gathered.
+        public IceRolesEnum? IceRole = null;
         public string DtlsFingerprint;          // If DTLS handshake is being used this is the fingerprint or our DTLS certificate.
         public int MLineIndex = 0;
 
@@ -188,11 +189,14 @@ namespace SIPSorcery.Net
             Port = port;
             MediaStreamStatus = DEFAULT_STREAM_STATUS;
 
-            foreach (var fmt in mediaFormats)
+            if (mediaFormats != null)
             {
-                if (!MediaFormats.ContainsKey(fmt.ID))
+                foreach (var fmt in mediaFormats)
                 {
-                    MediaFormats.Add(fmt.ID, fmt);
+                    if (!MediaFormats.ContainsKey(fmt.ID))
+                    {
+                        MediaFormats.Add(fmt.ID, fmt);
+                    }
                 }
             }
         }
@@ -202,11 +206,14 @@ namespace SIPSorcery.Net
             Media = mediaType;
             Port = port;
 
-            foreach (var fmt in appMediaFormats)
+            if (appMediaFormats != null)
             {
-                if (!ApplicationMediaFormats.ContainsKey(fmt.ID))
+                foreach (var fmt in appMediaFormats)
                 {
-                    ApplicationMediaFormats.Add(fmt.ID, fmt);
+                    if (!ApplicationMediaFormats.ContainsKey(fmt.ID))
+                    {
+                        ApplicationMediaFormats.Add(fmt.ID, fmt);
+                    }
                 }
             }
         }
@@ -280,6 +287,7 @@ namespace SIPSorcery.Net
             announcement += !Extensions.IsNullOrWhiteSpace(IceUfrag) ? "a=" + SDP.ICE_UFRAG_ATTRIBUTE_PREFIX + ":" + IceUfrag + m_CRLF : null;
             announcement += !Extensions.IsNullOrWhiteSpace(IcePwd) ? "a=" + SDP.ICE_PWD_ATTRIBUTE_PREFIX + ":" + IcePwd + m_CRLF : null;
             announcement += !Extensions.IsNullOrWhiteSpace(DtlsFingerprint) ? "a=" + SDP.DTLS_FINGERPRINT_ATTRIBUTE_PREFIX + ":" + DtlsFingerprint + m_CRLF : null;
+            announcement += IceRole != null ? $"a={SDP.ICE_SETUP_ATTRIBUTE_PREFIX}:{IceRole}{m_CRLF}" : null; 
 
             if (IceCandidates?.Count() > 0)
             {
