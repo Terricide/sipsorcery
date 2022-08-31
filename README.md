@@ -35,18 +35,18 @@ The diagram below is a high level overview of a Real-time audio and video call b
 
 ## Installation
 
-The library is compliant with .NET Standard 2.0 (encompassing .NET Core 2.0+), .NET Framework 4.6.1 (theoretically also encompassed by `netstandard2.0` but set as an explicit target due to compatibility issues between the two) and .NET 5. The demo applications mainly target .NET Core 3.1 with newer ones targeting .NET 5. It is available via NuGet.
+The library is compliant with .NET Standard 2.0 (encompassing .NET Core 2.0+), .NET Framework 4.6.1 (theoretically also encompassed by `netstandard2.0` but set as an explicit target due to compatibility issues between the two), .NET 5 and .NET 6. The demo applications mainly target .NET Core 3.1 with newer ones targeting .NET 5 or 6. The library is available via NuGet.
 
-For .NET Core:
+For .NET Core and .NET 5 & 6:
 
 ````bash
-dotnet add package SIPSorcery -v 5.1.2
+dotnet add package SIPSorcery
 ````
 
 With Visual Studio Package Manager Console (or search for [SIPSorcery on NuGet](https://www.nuget.org/packages/SIPSorcery/)):
 
 ````ps1
-Install-Package SIPSorcery -v 5.1.2
+Install-Package SIPSorcery
 ````
 
 ## Documentation
@@ -61,48 +61,35 @@ For WebRTC testing the [webrtc-echoes](https://github.com/sipsorcery/webrtc-echo
 
 ## Getting Started VoIP
 
-The simplest possible example to place an audio-only SIP call is shown below. This example relies on the Windows specific `SIPSorceryMedia.Windows` library to play the received audio and only works on Windows (due to lack of .NET Core audio device support on non-Windows platforms).
+**Note, the examples below have been updated for .NET 6. They can be made to work with .NET 5 and .NET Core but will require some adjustments to the instructions below.**
+
+The simplest possible example to place an audio-only SIP call is shown below. This example relies on the Windows specific `SIPSorceryMedia.Windows` library to play the received audio and only works on Windows (due to lack of .NET audio device support on non-Windows platforms).
 
 ````bash
-dotnet new console --name SIPGetStarted -f netcoreapp3.1
+dotnet new console --name SIPGetStarted --framework net6.0 --target-framework-override net6.0-windows10.0.22000
 cd SIPGetStarted
-dotnet add package SIPSorcery -v 5.1.2
-dotnet add package SIPSorceryMedia.Windows -v 0.0.31-pre
+dotnet add package SIPSorcery
+dotnet add package SIPSorceryMedia.Windows --prerelease
 # Paste the code below into Program.cs.
 dotnet run
 # If successful you will hear a "Hello World" announcement.
 ````
 
 ````csharp
-using System;
-using System.Threading.Tasks;
-using SIPSorcery.SIP.App;
-using SIPSorcery.Media;
-using SIPSorceryMedia.Windows;
-
-namespace SIPGetStarted
-{
-    class Program
-    {
-         private static string DESTINATION = "helloworld@sipsorcery.cloud";
+string DESTINATION = "helloworld@sipsorcery.cloud";
         
-        static async Task Main()
-        {
-            Console.WriteLine("SIP Get Started");
-			
-            var userAgent = new SIPUserAgent();
-            var winAudio = new WindowsAudioEndPoint(new AudioEncoder());
-            var voipMediaSession = new VoIPMediaSession(winAudio.ToMediaEndPoints());
+Console.WriteLine("SIP Get Started");
 
-            // Place the call and wait for the result.
-            bool callResult = await userAgent.Call(DESTINATION, null, null, voipMediaSession);
-            Console.WriteLine($"Call result {((callResult) ? "success" : "failure")}.");
+var userAgent = new SIPSorcery.SIP.App.SIPUserAgent();
+var winAudio = new SIPSorceryMedia.Windows.WindowsAudioEndPoint(new SIPSorcery.Media.AudioEncoder());
+var voipMediaSession = new SIPSorcery.Media.VoIPMediaSession(winAudio.ToMediaEndPoints());
 
-            Console.WriteLine("Press any key to hangup and exit.");
-            Console.ReadLine();
-        }
-    }
-}
+// Place the call and wait for the result.
+bool callResult = await userAgent.Call(DESTINATION, null, null, voipMediaSession);
+Console.WriteLine($"Call result {(callResult ? "success" : "failure")}.");
+
+Console.WriteLine("Press any key to hangup and exit.");
+Console.ReadLine();
 ````
 
 The [GetStarted](https://github.com/sipsorcery-org/sipsorcery/tree/master/examples/SIPExamples/GetStarted) example contains the full source and project file for the example above.
@@ -131,10 +118,10 @@ The example relies on the Windows specific `SIPSorceryMedia.Encoders` package, w
 **Step 1:**
 
 ````bash
-dotnet new console --name WebRTCGetStarted -f net5.0
+dotnet new console --name WebRTCGetStarted
 cd WebRTCGetStarted
-dotnet add package SIPSorcery -v 5.1.2
-dotnet add package SIPSorceryMedia.Encoders -v 0.0.10-pre
+dotnet add package SIPSorcery
+dotnet add package SIPSorceryMedia.Encoders --prerelease
 # Paste the code below into Program.cs.
 dotnet run
 ````

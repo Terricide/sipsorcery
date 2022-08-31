@@ -14,6 +14,7 @@
 //-----------------------------------------------------------------------------
 
 using System;
+using System.Linq;
 using System.Net;
 using System.Text;
 using Microsoft.Extensions.Logging;
@@ -143,11 +144,18 @@ namespace SIPSorcery.Net
         /// <remarks>
         /// See https://tools.ietf.org/html/rfc8445#section-6.1.2.3.
         /// </remarks>
-        public ulong Priority =>
-                ((2 << 32) * Math.Min(LocalPriority, RemotePriority) +
-                2 * Math.Max(LocalPriority, RemotePriority) +
-                (ulong)((IsLocalController) ? LocalPriority > RemotePriority ? 1 : 0
-                    : RemotePriority > LocalPriority ? 1 : 0));
+        public ulong Priority
+        {
+            get
+            {
+                ulong priority = Math.Min(LocalPriority, RemotePriority);
+                priority = priority << 32;
+                priority += 2u * (ulong)Math.Max(LocalPriority, RemotePriority) + (ulong)((IsLocalController) ? LocalPriority > RemotePriority ? 1 : 0
+                    : RemotePriority > LocalPriority ? 1 : 0);
+
+                return priority;
+            }
+        }
 
         /// <summary>
         /// Timestamp the first connectivity check (STUN binding request) was sent at.
@@ -229,7 +237,41 @@ namespace SIPSorcery.Net
 
         internal void GotStunResponse(STUNMessage stunResponse, IPEndPoint remoteEndPoint)
         {
-            if (stunResponse.Header.MessageType == STUNMessageTypesEnum.BindingSuccessResponse)
+            bool retry = false;
+            var msgType = stunResponse.Header.MessageClass;
+            if (msgType == STUNClassTypesEnum.ErrorResponse)
+            {
+                if (stunResponse.Attributes.Any(x => x.AttributeType == STUNAttributeTypesEnum.ErrorCode))
+                {
+                    var errCodeAttribute =
+                        stunResponse.Attributes.First(x => x.AttributeType == STUNAttributeTypesEnum.ErrorCode) as
+                            STUNErrorCodeAttribute;
+                    if (errCodeAttribute.ErrorCode == IceServer.STUN_UNAUTHORISED_ERROR_CODE ||
+                        errCodeAttribute.ErrorCode == IceServer.STUN_STALE_NONCE_ERROR_CODE)
+                    {
+                        LocalCandidate.IceServer.SetAuthenticationFields(stunResponse);
+                        LocalCandidate.IceServer.GenerateNewTransactionID();
+                        retry = true;
+                    }
+                }
+
+            }
+
+            if (stunResponse.Header.MessageType == STUNMessageTypesEnum.RefreshSuccessResponse)
+            {
+                var lifetime = stunResponse.Attributes.FirstOrDefault(x => x.AttributeType == STUNAttributeTypesEnum.Lifetime);
+
+                if (lifetime != null)
+                {
+                    LocalCandidate.IceServer.TurnTimeToExpiry = DateTime.Now +
+                                                               TimeSpan.FromSeconds(BitConverter.ToUInt32(lifetime.Value.Reverse().ToArray(), 0));
+                }
+            }
+            else if (stunResponse.Header.MessageType == STUNMessageTypesEnum.RefreshErrorResponse)
+            {
+                logger.LogError("Cannot refresh TURN allocation");
+            }
+            else if (stunResponse.Header.MessageType == STUNMessageTypesEnum.BindingSuccessResponse)
             {
                 if (Nominated)
                 {
@@ -242,7 +284,7 @@ namespace SIPSorcery.Net
                 {
                     State = ChecklistEntryState.Succeeded;
                     ChecksSent = 0;
-                    LastCheckSentAt = DateTime.MinValue;
+                    //LastCheckSentAt = DateTime.MinValue;
                 }
             }
             else if (stunResponse.Header.MessageType == STUNMessageTypesEnum.BindingErrorResponse)
@@ -254,13 +296,14 @@ namespace SIPSorcery.Net
             else if (stunResponse.Header.MessageType == STUNMessageTypesEnum.CreatePermissionSuccessResponse)
             {
                 logger.LogDebug($"A TURN Create Permission success response was received from {remoteEndPoint} (TxID: {Encoding.ASCII.GetString(stunResponse.Header.TransactionId)}).");
+                TurnPermissionsRequestSent = 1;
                 TurnPermissionsResponseAt = DateTime.Now;
             }
             else if (stunResponse.Header.MessageType == STUNMessageTypesEnum.CreatePermissionErrorResponse)
             {
                 logger.LogWarning($"ICE RTP channel TURN Create Permission error response was received from {remoteEndPoint}.");
                 TurnPermissionsResponseAt = DateTime.Now;
-                State = ChecklistEntryState.Failed;
+                State = retry ? State : ChecklistEntryState.Failed;
             }
             else
             {

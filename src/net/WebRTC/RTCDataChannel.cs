@@ -113,7 +113,8 @@ namespace SIPSorcery.Net
         {
             IsOpened = false;
             readyState = RTCDataChannelState.closed;
-            // TODO. What actions are required?
+            logger.LogDebug($"Data channel with id {id} has been closed");
+            onclose?.Invoke();
         }
 
         /// <summary>
@@ -122,7 +123,7 @@ namespace SIPSorcery.Net
         /// <param name="message">The string message to send.</param>
         public void send(string message)
         {
-            if (message != null & Encoding.UTF8.GetByteCount(message) > _transport.maxMessageSize)
+            if (message != null && Encoding.UTF8.GetByteCount(message) > _transport.maxMessageSize)
             {
                 throw new ApplicationException($"Data channel {label} was requested to send data of length {Encoding.UTF8.GetByteCount(message)} " +
                     $" that exceeded the maximum allowed message size of {_transport.maxMessageSize}.");
@@ -219,13 +220,6 @@ namespace SIPSorcery.Net
                        (uint)DataChannelPayloadProtocols.WebRTC_DCEP,
                        new byte[] { (byte)DataChannelMessageTypes.ACK });
             }
-        }
-
-        public void close(uint streamID)
-        {
-            IsOpened = false;
-            logger.LogDebug($"Data channel stream closed id {streamID}.");
-            onclose?.Invoke();
         }
 
         /// <summary>

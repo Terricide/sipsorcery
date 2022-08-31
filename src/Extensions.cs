@@ -135,6 +135,20 @@ namespace SIPSorcery
 #endif
         }
 
+        public static bool IsIPv6Teredo(this IPAddress address)
+        {
+#if NET20
+            if (address.AddressFamily == AddressFamily.InterNetworkV6 && address.IPAddressNumbers()[0] == 8193)
+            {
+                return address.IPAddressNumbers()[1] == 0;
+            }
+
+            return false;
+#else
+            return address.IsIPv6Teredo;
+#endif
+        }
+
 #if NET20
         public static byte[] ToArray(this ArraySegment<byte> arr)
         {

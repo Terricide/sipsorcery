@@ -48,7 +48,6 @@ namespace SIPSorcery.SIP.App
     {
         private static readonly string m_sdpContentType = SDP.SDP_MIME_CONTENTTYPE;
         private static readonly string m_sipReferContentType = SIPMIMETypes.REFER_CONTENT_TYPE;
-        private static string m_userAgent = SIPConstants.SIP_USERAGENT_STRING;
         private static int WAIT_ONHOLD_TIMEOUT = SIPTimings.T1;
         private static int WAIT_DIALOG_TIMEOUT = SIPTimings.T2;
 
@@ -506,6 +505,7 @@ namespace SIPSorcery.SIP.App
             {
                 MediaSession = mediaSession;
                 MediaSession.OnRtpEvent += OnRemoteRtpEvent;
+                MediaSession.OnTimeout += OnRtpTimeout;
 
                 var sdpAnnounceAddress = mediaSession.RtpBindAddress ?? NetServices.GetLocalAddressForRemote(serverEndPoint.Address);
 
@@ -661,6 +661,7 @@ namespace SIPSorcery.SIP.App
 
                 MediaSession = mediaSession;
                 MediaSession.OnRtpEvent += OnRemoteRtpEvent;
+                MediaSession.OnTimeout += OnRtpTimeout;
                 MediaSession.OnRtpClosed += (reason) =>
                 {
                     if (MediaSession?.IsClosed == false)
@@ -713,7 +714,7 @@ namespace SIPSorcery.SIP.App
 
                 await Task.WhenAny(dialogueCreatedTcs.Task, Task.Delay(WAIT_DIALOG_TIMEOUT)).ConfigureAwait(false);
 
-                if (m_uas.SIPDialogue != null)
+                if (m_uas?.SIPDialogue != null)
                 {
                     m_sipDialogue = m_uas.SIPDialogue;
 
@@ -1210,7 +1211,7 @@ namespace SIPSorcery.SIP.App
                 m_sipDialogue.SDP = sdp.ToString();
 
                 var reinviteRequest = m_sipDialogue.GetInDialogRequest(SIPMethodsEnum.INVITE);
-                reinviteRequest.Header.UserAgent = m_userAgent;
+                reinviteRequest.Header.UserAgent = SIPConstants.SipUserAgentVersionString;
                 reinviteRequest.Header.ContentType = m_sdpContentType;
                 reinviteRequest.Body = sdp.ToString();
                 reinviteRequest.Header.Supported = SIPExtensionHeaders.REPLACES + ", " + SIPExtensionHeaders.NO_REFER_SUB + ", " + SIPExtensionHeaders.PRACK;
@@ -1430,6 +1431,11 @@ namespace SIPSorcery.SIP.App
             return Task.FromResult(SocketError.Success);
         }
 
+        /// <summary>
+        /// Once a call is established certain requests may need to be authenticated, e.g. a BYE request may be challenged. This method
+        /// looks up the credentials that were used for the initial INVITE request.
+        /// </summary>
+        /// <returns>A username and password pair.</returns>
         private (string, string) GetUsernameAndPassword()
         {
             string username = null;
@@ -1437,7 +1443,7 @@ namespace SIPSorcery.SIP.App
             // If we created the call, use the call descriptor
             if (m_callDescriptor != null)
             {
-                username = string.IsNullOrWhiteSpace(m_callDescriptor.AuthUsername) ? m_callDescriptor.Username : m_callDescriptor.AuthUsername;
+                username = Extensions.IsNullOrWhiteSpace(m_callDescriptor.AuthUsername) ? m_callDescriptor.Username : m_callDescriptor.AuthUsername;
                 password = m_callDescriptor.Password;
             }
             // Otherwise, use the sip account if we answered a call
@@ -1448,7 +1454,6 @@ namespace SIPSorcery.SIP.App
             }
             return (username, password);
         }
-
 
         /// <summary>
         /// Takes care of sending a response based on whether the outbound proxy is set or not.
@@ -1672,6 +1677,7 @@ namespace SIPSorcery.SIP.App
                         MediaSession = null;
                     }
 
+                    OnCallHungup?.Invoke(m_sipDialogue);
                     m_sipDialogue = null;
                 }
             }
@@ -1791,6 +1797,17 @@ namespace SIPSorcery.SIP.App
                     _rtpEventSsrc = 0;
                 }
             }
+        }
+
+        /// <summary>
+        /// Event handler for the audio or video RTP session timing out.
+        /// </summary>
+        /// <param name="mediaType">The media type, aduio or video, that timed out.</param>
+        private void OnRtpTimeout(SDPMediaTypesEnum mediaType)
+        {
+            logger.LogWarning($"RTP has timed out for media {mediaType}, hanging up call.");
+
+            Hangup();
         }
 
         /// <summary>

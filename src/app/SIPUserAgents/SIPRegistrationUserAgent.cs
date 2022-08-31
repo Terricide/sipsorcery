@@ -39,8 +39,6 @@ namespace SIPSorcery.SIP.App
 
         private static ILogger logger = Log.Logger;
 
-        private static readonly string m_userAgent = SIPConstants.SIP_USERAGENT_STRING;
-
         private SIPTransport m_sipTransport;
         private SIPEndPoint m_outboundProxy;
         private SIPURI m_sipAccountAOR;
@@ -49,8 +47,8 @@ namespace SIPSorcery.SIP.App
         private string m_realm;
         private string m_registrarHost;
         private SIPURI m_contactURI;
-        private int m_expiry;
-        private int m_originalExpiry;
+        private long m_expiry;
+        private long m_originalExpiry;
         private int m_registerFailureRetryInterval;     // Number of seconds between consecutive register requests in the event of failures or timeouts.
         private int m_maxRegistrationAttemptTimeout;    // The period in seconds to wait for a server response before classifying the registration request as failed.
         private int m_maxRegisterAttempts;              // The maximum number of registration attempts that will be made without a failure condition before incurring a temporary failure.
@@ -87,7 +85,7 @@ namespace SIPSorcery.SIP.App
         public event Action<SIPURI> RegistrationRemoved;
 
         public Func<SIPRequest, SIPRequest> AdjustRegister;
-        public Func<int, int> AdjustRefreshTime;
+        public Func<long, int> AdjustRefreshTime;
 
         /// <summary>
         /// If set all requests will be sent via the outbound SIP proxy instead of being sent to the
@@ -203,7 +201,7 @@ namespace SIPSorcery.SIP.App
 
             m_expiry = m_originalExpiry;
             m_exit = false;
-            int callbackPeriod = (m_expiry - REGISTRATION_HEAD_TIME) * 1000;
+            long callbackPeriod = (m_expiry - REGISTRATION_HEAD_TIME) * 1000;
             logger.LogDebug($"Starting SIPRegistrationUserAgent for {m_sipAccountAOR}, callback period {callbackPeriod / 1000}s.");
 
             if (callbackPeriod < REGISTER_MINIMUM_EXPIRY * 1000)
@@ -567,9 +565,9 @@ namespace SIPSorcery.SIP.App
             }
         }
 
-        private int GetUpdatedExpiryForIntervalTooBrief(SIPResponse sipResponse)
+        private long GetUpdatedExpiryForIntervalTooBrief(SIPResponse sipResponse)
         {
-            int newExpiry = sipResponse.Header.MinExpires;
+            long newExpiry = (sipResponse.Header.MinExpires > UInt32.MaxValue) ? UInt32.MaxValue : sipResponse.Header.MinExpires;
 
             if (newExpiry != 0 && newExpiry > m_expiry)
             {
@@ -590,12 +588,12 @@ namespace SIPSorcery.SIP.App
             return m_expiry;
         }
 
-        private int GetUpdatedExpiry(SIPResponse sipResponse)
+        private long GetUpdatedExpiry(SIPResponse sipResponse)
         {
             // Find the contact in the list that matches the one being maintained by this agent in order to determine the expiry value.
-            int serverExpiry = m_expiry;
-            int headerExpires = sipResponse.Header.Expires;
-            int contactExpires = -1;
+            long serverExpiry = m_expiry;
+            long headerExpires = (sipResponse.Header.Expires > UInt32.MaxValue) ? UInt32.MaxValue : sipResponse.Header.Expires;
+            long contactExpires = -1;
             if (sipResponse.Header.Contact != null && sipResponse.Header.Contact.Count > 0)
             {
                 if (sipResponse.Header.Contact.Count == 1)
@@ -653,7 +651,7 @@ namespace SIPSorcery.SIP.App
             registerRequest.Header.Contact = new List<SIPContactHeader> { new SIPContactHeader(this.UserDisplayName, m_contactURI) };
             registerRequest.Header.CSeq = ++m_cseq;
             registerRequest.Header.CallId = m_callID;
-            registerRequest.Header.UserAgent = (!UserAgent.IsNullOrBlank()) ? UserAgent : m_userAgent;
+            registerRequest.Header.UserAgent = (!UserAgent.IsNullOrBlank()) ? UserAgent : SIPConstants.SipUserAgentVersionString;
             registerRequest.Header.Expires = m_expiry;
 
             if (m_customHeaders != null && m_customHeaders.Length > 0)

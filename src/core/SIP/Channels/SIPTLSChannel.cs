@@ -31,6 +31,7 @@ namespace SIPSorcery.SIP
         private const int TLS_ATTEMPT_CONNECT_TIMEOUT = 5000;
 
         private X509Certificate2 m_serverCertificate;
+        private X509Certificate2Collection m_clientCertificates;
 
         override protected string ProtDescr { get; } = "TLS";
 
@@ -47,7 +48,7 @@ namespace SIPSorcery.SIP
             IsSecure = true;
         }
 
-        public SIPTLSChannel(X509Certificate2 serverCertificate, IPEndPoint endPoint, bool useDualMode = false)
+        public SIPTLSChannel(X509Certificate2 serverCertificate, IPEndPoint endPoint, bool useDualMode = false, X509Certificate2Collection clientCertificates = null)
             : base(endPoint, SIPProtocolsEnum.tls, serverCertificate != null, useDualMode)
         {
             if (endPoint == null)
@@ -57,6 +58,7 @@ namespace SIPSorcery.SIP
 
             IsSecure = true;
             m_serverCertificate = serverCertificate;
+            m_clientCertificates = clientCertificates;
 
             if (m_serverCertificate != null)
             {
@@ -114,7 +116,12 @@ namespace SIPSorcery.SIP
             //DisplayCertificateInformation(sslStream);
 
             var timeoutTask = Task.Delay(TLS_ATTEMPT_CONNECT_TIMEOUT);
-            var sslStreamTask = sslStream.AuthenticateAsClientAsync(serverCertificateName);
+#if NET20
+            //var sslStreamTask = m_clientCertificates != null ? sslStream.AuthenticateAsClientAsync(serverCertificateName, m_clientCertificates, System.Security.Authentication.SslProtocols.None, false) : sslStream.AuthenticateAsClientAsync(serverCertificateName);
+            var sslStreamTask = sslStream.AuthenticateAsClientAsync(serverCertificateName);            
+#else
+            var sslStreamTask = m_clientCertificates != null ? sslStream.AuthenticateAsClientAsync(serverCertificateName, m_clientCertificates, System.Security.Authentication.SslProtocols.None, false) : sslStream.AuthenticateAsClientAsync(serverCertificateName);
+#endif
             await Task.WhenAny(sslStreamTask, timeoutTask).ConfigureAwait(false);
 
             if(sslStreamTask.IsCompleted)
@@ -260,7 +267,7 @@ namespace SIPSorcery.SIP
             }
         }
 
-        #region Certificate verbose logging.
+#region Certificate verbose logging.
 
         private void DisplayCertificateChain(X509Certificate2 certificate)
         {
@@ -354,6 +361,6 @@ namespace SIPSorcery.SIP
             }
         }
 
-        #endregion
+#endregion
     }
 }
